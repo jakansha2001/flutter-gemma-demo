@@ -28,11 +28,20 @@ Create a `.env` file in the project root:
 HUGGINGFACE_TOKEN=hf_your_token_here
 ```
 
+This file is gitignored by default.
+
 ### 3. Install dependencies
 
 ```bash
 flutter pub get
-cd ios && pod install && cd ..
+```
+
+For iOS:
+
+```bash
+cd ios
+pod install --repo-update
+cd ..
 ```
 
 ### 4. Run
@@ -40,24 +49,66 @@ cd ios && pod install && cd ..
 ```bash
 flutter run
 ```
+Select your Android or iOS device. The first launch will download the ~3GB model — this is a one-time download that persists on the device.
 
 ## Requirements
 
+- **Flutter:** 3.24+ (tested on 3.38.10)
 - **Android:** minSdk 26+, 6GB+ RAM recommended (8GB+ for live camera)
 - **iOS:** 16.0+, tested with free Apple ID signing
 - **First-time model download:** ~3 GB (one-time, over Wi-Fi)
+
+## Project Structure
+
+```
+lib/
+├── main.dart                          # App entry, dotenv + FlutterGemma init
+└── screens/
+    ├── home_screen.dart               # Landing screen with branding
+    ├── model_download_screen.dart     # Model download UI with progress
+    └── chat_screen.dart               # Multimodal chat with streaming
+```
 
 ## Architecture Notes
 
 - **Model:** Gemma 3n E2B, int4 quantized, MediaPipe `.task` format
 - **Backend:** GPU acceleration via MediaPipe GenAI
-- **Memory tradeoff:** On 6GB RAM devices, camera capture may be killed by Android's memory manager. Gallery picker is more reliable. Consider 8GB+ RAM for production deployments.
+- **Inference:** Streaming via `generateChatResponseAsync`
+- **State:** Simple StatefulWidgets, no state management library needed for a demo
 
-## License
+## Memory Tradeoffs
 
-MIT — see LICENSE file.
+On 6GB RAM devices (like Redmi Note 7 Pro), launching the native camera app can cause Android to kill the Flutter app to free memory for the camera — because Gemma 3n E2B already occupies ~3GB of RAM.
+
+- **Workaround in this demo:** use gallery picker instead of camera.
+- **Production recommendation:** either use an in-app camera via the `camera` package, target 8GB+ RAM devices, or use a smaller model.
+
+This is a real constraint of on-device AI that cloud-based AI doesn't have.
+
+## Key Dependencies
+
+- [`flutter_gemma`](https://pub.dev/packages/flutter_gemma) — Core on-device inference
+- [`flutter_dotenv`](https://pub.dev/packages/flutter_dotenv) — Token management
+- [`image_picker`](https://pub.dev/packages/image_picker) — Gallery/camera access
+- [`path_provider`](https://pub.dev/packages/path_provider) — Model file paths
+
+## About the Talk
+
+This demo was built for a talk at Build with AI New Delhi 2026, covering:
+
+- What on-device AI is and why it matters
+- Gemma vs Gemini — the two model families
+- Parameters, tokens, context windows, quantization explained
+- Mixture of Experts vs Dense model architectures
+- Real tradeoffs — memory, battery, model update lifecycle
+- Building and shipping on-device AI features in Flutter
 
 ## Credits
 
 - [flutter_gemma](https://github.com/DenisovAV/flutter_gemma) by Sasha Denisov
 - [Gemma](https://ai.google.dev/gemma) by Google DeepMind
+- [MediaPipe](https://developers.google.com/mediapipe) for on-device inference
+
+## Author
+
+**Akansha Jain** — Senior Software Engineer, Google Women Techmakers Ambassador, Co-organizer of Flutter Conf India and Flutter Delhi.
