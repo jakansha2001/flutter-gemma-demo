@@ -24,7 +24,9 @@ All powered by Google's open-source [Gemma 3n E2B](https://huggingface.co/google
 ### 2. Add your token
 
 Create a `.env` file in the project root:
+```
 HUGGINGFACE_TOKEN=hf_your_token_here
+```
 
 ### 3. Install dependencies
 
