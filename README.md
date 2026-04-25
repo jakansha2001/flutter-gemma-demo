@@ -51,6 +51,21 @@ flutter run
 ```
 Select your Android or iOS device. The first launch will download the ~3GB model — this is a one-time download that persists on the device.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/79e1dd38-cef2-4f2b-bc2c-eaa872ed5f2c" width="200"/></td>
+    <td><img src="https://github.com/user-attachments/assets/0fb32580-e8e8-4b96-893a-9ef7dc79ed98" width="200"/></td>
+    <td><img src="https://github.com/user-attachments/assets/91928737-51aa-4459-8f14-adde546a8c9c" width="200"/></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/5d6d755d-add9-4294-954c-70b31d28464e" width="200"/></td>
+    <td><img src="https://github.com/user-attachments/assets/2d223caa-36de-48aa-9145-507881015ec5" width="200"/></td>
+    <td><img src="https://github.com/user-attachments/assets/bde31f20-730a-4307-9035-419c9658ef43" width="200"/></td>
+  </tr>
+</table>
+
 ## Requirements
 
 - **Flutter:** 3.24+ (tested on 3.38.10)
