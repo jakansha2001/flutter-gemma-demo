@@ -4,5 +4,30 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- LiteRT-LM JITs compute kernels and dlopens the Metal accelerator
+	     dylibs staged by the Podfile build phase, so the sandbox needs all
+	     three of these. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<!-- Outbound: the one-time model download. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Image picker. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- Microphone, for the voice loop. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- NOTE: com.apple.developer.kernel.extended-virtual-addressing and
+	     .increased-memory-limit are deliberately NOT here. They are iOS/iPadOS
+	     entitlements - macOS has no equivalent per-process cap - and including
+	     them forces Xcode to demand a development signing certificate, which
+	     breaks `flutter build macos` on a machine with no team configured. -->
 </dict>
 </plist>

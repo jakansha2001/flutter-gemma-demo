@@ -25,6 +25,12 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
+        // The .litertlm engine is dart:ffi over LiteRT-LM, and the plugin
+        // ships arm64 prebuilts only. Restricting the build stops the Play
+        // Store from offering a broken APK to x86_64/armeabi-v7a devices, and
+        // stops `flutter run` from producing an app that dies at engine init
+        // on an x86_64 emulator.
+        ndk { abiFilters += listOf("arm64-v8a") }
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
