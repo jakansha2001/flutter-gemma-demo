@@ -70,6 +70,15 @@ abstract final class Models {
       'Always write in English, including any reasoning. Never substitute '
       'words from other languages or scripts.';
 
+  // Voice replies get tighter sampling still. They are one or two short
+  // factual sentences, so varied phrasing buys nothing — and a code-switched
+  // token costs more here than on screen, because an English synthesizer
+  // cannot pronounce it at all. Lower temperature makes the likeliest token
+  // win more often, which in an English context means the English one.
+  static const voiceTemperature = 0.3;
+  static const voiceTopK = 20;
+  static const voiceTopP = 0.85;
+
   /// Formatting rules for anything a person reads on screen.
   ///
   /// Small models reach for LaTeX constantly, and theirs is frequently

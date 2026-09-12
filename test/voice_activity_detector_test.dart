@@ -1,98 +1,122 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gemma_vision_demo/gemma/voice_activity_detector.dart';
 
-/// The detector is the piece that decides whether hands-free works at all.
-/// Every case here is a room it has to cope with — including the two that
-/// broke it in practice: a noisy microphone, and a floor that climbed while
-/// the user was speaking.
+/// The detector decides whether hands-free works at all. It is a fixed
+/// threshold on purpose — see the class doc — so these tests are about the
+/// relationship between the bar and real audio levels, not about adaptation.
 void main() {
-  VoiceActivityDetector vad() => VoiceActivityDetector();
+  VoiceActivityDetector vad({double threshold = -40}) =>
+      VoiceActivityDetector(thresholdDb: threshold);
 
-  /// Feed [seconds] worth of samples at [db].
-  void feed(VoiceActivityDetector d, double db, {double seconds = 1}) {
-    final count = (seconds * 1000 / d.pollInterval.inMilliseconds).round();
+  /// Feed [seconds] of audio at [db], in frames of [chunk].
+  void feed(
+    VoiceActivityDetector d,
+    double db, {
+    required double seconds,
+    Duration chunk = const Duration(milliseconds: 150),
+  }) {
+    final count = (seconds * 1000 / chunk.inMilliseconds).round();
     for (var i = 0; i < count; i++) {
-      d.addSample(db);
+      d.addSample(db, duration: chunk);
     }
   }
 
-  group('quiet rooms', () {
-    test('silence alone never starts a turn', () {
+  group('the bar never moves', () {
+    test('a long utterance does not shift the threshold', () {
+      // The whole reason this is fixed. Every adaptive version eventually
+      // drifted upward while the user was speaking.
       final d = vad();
-      feed(d, -55, seconds: 10);
+      final before = d.triggerDb;
+      feed(d, -50, seconds: 3);
+      feed(d, -18, seconds: 20);
+      feed(d, -50, seconds: 3);
+      expect(d.triggerDb, before);
+    });
+
+    test('the threshold is exactly what was configured', () {
+      expect(vad(threshold: -30).triggerDb, -30);
+      expect(vad(threshold: -45).triggerDb, -45);
+    });
+  });
+
+  group('detecting speech', () {
+    test('normal speech above the bar starts a turn', () {
+      final d = vad();
+      feed(d, -50, seconds: 2);
+      feed(d, -22, seconds: 1);
+      expect(d.speechStarted, isTrue);
+    });
+
+    test('silence never starts a turn', () {
+      final d = vad();
+      feed(d, -55, seconds: 20);
       expect(d.speechStarted, isFalse);
       expect(d.shouldEndTurn, isFalse);
     });
 
-    test('detects normal speech over a quiet floor', () {
+    test('a fan or humming below the bar never starts a turn', () {
       final d = vad();
-      feed(d, -55, seconds: 2); // ambient
-      feed(d, -25, seconds: 1); // talking
-      expect(d.speechStarted, isTrue);
-    });
-  });
-
-  group('noisy rooms', () {
-    test('detects speech over a LOUD floor', () {
-      // The failure mode that made hands-free unusable: a high noise floor
-      // pushed the trigger somewhere the voice never reached.
-      final d = vad();
-      feed(d, -34, seconds: 3); // noisy ambient
-      feed(d, -18, seconds: 1); // talking over it
-      expect(d.speechStarted, isTrue);
-    });
-
-    test('the trigger never exceeds the ceiling', () {
-      final d = vad();
-      feed(d, -5, seconds: 4); // absurdly loud room
-      expect(d.triggerDb, lessThanOrEqualTo(d.maxTriggerDb));
-    });
-
-    test('the trigger never drops below the floor limit', () {
-      final d = vad();
-      feed(d, -140, seconds: 4); // effectively dead mic
-      expect(d.triggerDb, greaterThanOrEqualTo(d.minTriggerDb));
-    });
-
-    test('steady noise on its own does not start a turn', () {
-      final d = vad();
-      feed(d, -34, seconds: 12);
+      feed(d, -48, seconds: 20);
       expect(d.speechStarted, isFalse);
     });
-  });
 
-  group('the floor must not chase the voice', () {
-    test('a long utterance keeps the trigger below the speech level', () {
-      // Regression: an averaging floor climbed during speech, pulling the
-      // trigger up with it, so speech stopped registering partway through.
+    test('noise above the bar DOES count — raise the bar for that room', () {
+      // Honest about the trade a fixed threshold makes.
+      final tooLow = vad(threshold: -40);
+      feed(tooLow, -28, seconds: 5);
+      expect(tooLow.speechStarted, isTrue);
+
+      final raised = vad(threshold: -22);
+      feed(raised, -28, seconds: 5);
+      expect(raised.speechStarted, isFalse);
+      feed(raised, -16, seconds: 2);
+      expect(raised.speechStarted, isTrue);
+    });
+
+    test('a single loud frame is not speech', () {
       final d = vad();
-      feed(d, -55, seconds: 1);
-      feed(d, -22, seconds: 8); // a long answer
-      expect(d.speechStarted, isTrue);
-      expect(
-        d.triggerDb,
-        lessThan(-22),
-        reason: 'trigger ${d.triggerDb} climbed above the speaking level',
-      );
+      feed(d, -50, seconds: 2);
+      d.addSample(-10);
+      expect(d.speechStarted, isFalse);
     });
   });
 
   group('ending a turn', () {
     test('ends after a sustained pause', () {
       final d = vad();
-      feed(d, -55, seconds: 1);
-      feed(d, -25, seconds: 1);
+      feed(d, -50, seconds: 2);
+      feed(d, -20, seconds: 2);
       expect(d.shouldEndTurn, isFalse);
-      feed(d, -55, seconds: 2.5);
+      feed(d, -50, seconds: 3.2);
       expect(d.shouldEndTurn, isTrue);
     });
 
-    test('a short mid-sentence pause does NOT end the turn', () {
+    test('breathing mid-sentence does not end it', () {
       final d = vad();
-      feed(d, -55, seconds: 1);
-      feed(d, -25, seconds: 1);
-      feed(d, -55, seconds: 0.8); // thinking pause
-      feed(d, -25, seconds: 1); // carries on
+      feed(d, -50, seconds: 2);
+      for (var i = 0; i < 12; i++) {
+        feed(d, -20, seconds: 2.0); // a clause
+        feed(d, -50, seconds: 0.9); // breath
+      }
+      expect(d.shouldEndTurn, isFalse);
+    });
+
+    test('a long thinking pause mid-sentence does not end it', () {
+      final d = vad();
+      feed(d, -50, seconds: 2);
+      feed(d, -20, seconds: 2);
+      feed(d, -50, seconds: 2.0); // "umm..."
+      feed(d, -20, seconds: 2);
+      expect(d.shouldEndTurn, isFalse);
+    });
+
+    test('syllable-level variation does not end it', () {
+      final d = vad();
+      feed(d, -50, seconds: 2);
+      for (var i = 0; i < 40; i++) {
+        feed(d, -18, seconds: 0.3); // syllables
+        feed(d, -46, seconds: 0.2); // gaps between words
+      }
       expect(d.shouldEndTurn, isFalse);
     });
 
@@ -103,40 +127,83 @@ void main() {
     });
   });
 
-  group('robustness', () {
-    test('a single spike is not speech', () {
+  group('robustness at a real chunk cadence', () {
+    // The recorder streams far faster than the nominal poll interval, and
+    // sizing anything in frame COUNTS rather than duration broke this twice.
+    const fast = Duration(milliseconds: 10);
+
+    test('detects speech and the pause at 10ms frames', () {
       final d = vad();
-      feed(d, -55, seconds: 2);
-      d.addSample(-10); // one loud frame: a door slam
-      expect(d.speechStarted, isFalse);
+      feed(d, -50, seconds: 2, chunk: fast);
+      feed(d, -20, seconds: 2, chunk: fast);
+      expect(d.speechStarted, isTrue);
+      feed(d, -50, seconds: 3.2, chunk: fast);
+      expect(d.shouldEndTurn, isTrue);
     });
 
-    test('a brief dip inside a word does not lose progress', () {
+    test('one blip does not restart the pause timer', () {
       final d = vad();
-      feed(d, -55, seconds: 2);
-      d
-        ..addSample(-22)
-        ..addSample(-22)
-        ..addSample(-45) // consonant gap
-        ..addSample(-22)
-        ..addSample(-22);
-      expect(d.speechStarted, isTrue);
+      feed(d, -50, seconds: 2, chunk: fast);
+      feed(d, -20, seconds: 2, chunk: fast);
+      feed(d, -52, seconds: 1.6, chunk: fast);
+      d.addSample(-18, duration: fast); // a click
+      feed(d, -52, seconds: 1.6, chunk: fast);
+      expect(d.shouldEndTurn, isTrue);
+    });
+
+    test('resumed speech does cancel the pause', () {
+      final d = vad();
+      feed(d, -50, seconds: 2, chunk: fast);
+      feed(d, -20, seconds: 2, chunk: fast);
+      feed(d, -52, seconds: 2.0, chunk: fast);
+      feed(d, -20, seconds: 1, chunk: fast);
+      expect(d.shouldEndTurn, isFalse);
+      expect(d.quietProgress, lessThan(0.2));
+    });
+  });
+
+  group('hysteresis', () {
+    test('audio between the two levels holds state', () {
+      // -42 is below the -40 bar but above the -44 quiet level.
+      final d = vad();
+      expect(d.quietBelowDb, -44);
+      feed(d, -50, seconds: 2);
+      feed(d, -20, seconds: 2);
+      final progressBefore = d.quietProgress;
+      feed(d, -42, seconds: 2);
+      expect(d.quietProgress, progressBefore);
+      expect(d.shouldEndTurn, isFalse);
+    });
+  });
+
+  group('bookkeeping', () {
+    test('quietProgress fills up during a pause', () {
+      final d = vad();
+      expect(d.quietProgress, 0);
+      feed(d, -50, seconds: 2);
+      feed(d, -20, seconds: 1);
+      feed(d, -50, seconds: 1.3);
+      expect(d.quietProgress, greaterThan(0.3));
+      expect(d.quietProgress, lessThan(1.0));
+      feed(d, -50, seconds: 2.0);
+      expect(d.quietProgress, 1.0);
     });
 
     test('reset clears everything', () {
       final d = vad();
-      feed(d, -25, seconds: 3);
+      feed(d, -20, seconds: 3);
       d.reset();
       expect(d.speechStarted, isFalse);
       expect(d.sampleCount, 0);
       expect(d.shouldEndTurn, isFalse);
+      expect(d.quietProgress, 0);
     });
 
-    test('describe() reports counts for on-screen diagnostics', () {
+    test('describe() reports the level and the bar', () {
       final d = vad();
       feed(d, -40, seconds: 1);
       expect(d.describe(), contains('samples'));
-      expect(d.sampleCount, greaterThan(0));
+      expect(d.describe(), contains('-40'));
     });
   });
 }

@@ -235,6 +235,9 @@ class MicControl extends StatelessWidget {
     required this.mode,
     required this.stage,
     required this.level,
+    required this.preparing,
+    required this.quietProgress,
+    required this.onSensitivityChanged,
     required this.triggerDb,
     required this.elapsed,
     required this.maxDuration,
@@ -249,6 +252,19 @@ class MicControl extends StatelessWidget {
   /// Current input level in dBFS, for the meter.
   final double level;
 
+  /// True between the button being pressed and the recorder actually running
+  /// — the microphone permission check can take a moment, and silence there
+  /// is indistinguishable from a dead button.
+  final bool preparing;
+
+  /// 0..1 through the pause that ends a hands-free turn.
+  final double quietProgress;
+
+  /// Nudge the speech threshold, in dB. The right value depends on the
+  /// microphone and the room, so it belongs in the hands of whoever is
+  /// standing in that room rather than in a rebuild.
+  final ValueChanged<double> onSensitivityChanged;
+
   final double triggerDb;
   final Duration elapsed;
   final Duration maxDuration;
@@ -261,7 +277,12 @@ class MicControl extends StatelessWidget {
   bool get _busy => stage == VoiceStage.transcribing || stage == VoiceStage.thinking;
   bool get _speaking => stage == VoiceStage.speaking;
 
-  String get _caption => switch (stage) {
+  String get _caption {
+    if (preparing) return 'Checking the microphone…';
+    return _stageCaption;
+  }
+
+  String get _stageCaption => switch (stage) {
     VoiceStage.armed => 'Listening — just start talking',
     // In hands-free the countdown is a lie: the silence detector almost
     // always ends the turn long before the cap. Show elapsed time and say
@@ -294,10 +315,45 @@ class MicControl extends StatelessWidget {
           if (_armed || (_recording && mode == VoiceMode.handsFree))
             Padding(
               padding: const EdgeInsets.only(bottom: 14),
-              child: _LevelMeter(
-                level: _normalisedLevel,
-                threshold: ((triggerDb + 60) / 60).clamp(0.0, 1.0),
-                active: _recording,
+              child: Column(
+                children: [
+                  _LevelMeter(
+                    level: _normalisedLevel,
+                    threshold: ((triggerDb + 60) / 60).clamp(0.0, 1.0),
+                    active: _recording,
+                  ),
+                  Gap.xs,
+                  _SensitivityControl(
+                    thresholdDb: triggerDb,
+                    onChanged: onSensitivityChanged,
+                  ),
+                ],
+              ),
+            ),
+          // Hands-free: show the pause filling, so it is obvious the
+          // detector heard you stop — and obvious when it did not.
+          if (_recording && mode == VoiceMode.handsFree && quietProgress > 0)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: quietProgress,
+                      minHeight: 3,
+                      backgroundColor: AppColors.surfaceHigh,
+                      valueColor: const AlwaysStoppedAnimation(
+                        AppColors.success,
+                      ),
+                    ),
+                  ),
+                  Gap.xs,
+                  Text(
+                    'Pause detected — sending soon',
+                    style: AppText.caption.copyWith(color: AppColors.success),
+                  ),
+                ],
               ),
             ),
           if (_recording && mode == VoiceMode.pushToTalk)
@@ -353,7 +409,7 @@ class MicControl extends StatelessWidget {
                       ]
                     : null,
               ),
-              child: _busy
+              child: _busy || preparing
                   ? const Padding(
                       padding: EdgeInsets.all(26),
                       child: CircularProgressIndicator(
@@ -441,6 +497,80 @@ class _LevelMeter extends StatelessWidget {
               child: Container(width: 2, height: 16, color: Colors.white38),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Moves the speech threshold up or down while listening.
+///
+/// Deliberately placed directly under the level meter: the white marker is
+/// the threshold, so you can watch your own voice against it and stop as soon
+/// as it clears comfortably. Tuning this by editing a constant and rebuilding
+/// is hopeless — the person who can hear the room is the one who should set
+/// it.
+class _SensitivityControl extends StatelessWidget {
+  const _SensitivityControl({
+    required this.thresholdDb,
+    required this.onChanged,
+  });
+
+  final double thresholdDb;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _NudgeButton(
+          icon: Icons.remove,
+          tooltip: 'More sensitive — picks up a quieter voice',
+          onTap: () => onChanged(thresholdDb - 2),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Text(
+            'speech above ${thresholdDb.toStringAsFixed(0)} dB',
+            style: AppText.caption.copyWith(fontSize: 10.5),
+          ),
+        ),
+        _NudgeButton(
+          icon: Icons.add,
+          tooltip: 'Less sensitive — ignores more background noise',
+          onTap: () => onChanged(thresholdDb + 2),
+        ),
+      ],
+    );
+  }
+}
+
+class _NudgeButton extends StatelessWidget {
+  const _NudgeButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(AppRadius.pill),
+          ),
+          child: Icon(icon, size: 13, color: AppColors.textSecondary),
         ),
       ),
     );

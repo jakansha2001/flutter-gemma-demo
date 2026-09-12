@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io' show File;
 import 'dart:typed_data';
 
@@ -55,12 +56,47 @@ enum VoiceMode {
 
 class _VoiceScreenState extends State<VoiceScreen> {
   final _recorder = AudioRecorder();
-  /// Two players, used alternately. While one is playing a sentence the
-  /// other is loading the next, so decoding never lands in the gap between
-  /// sentences. One player cannot do this: `setFilePath` on a playing player
-  /// would cut it off.
-  final _players = [AudioPlayer(), AudioPlayer()];
-  int _nextPlayer = 0;
+  /// A small pool, so one clip can load while another plays and decoding
+  /// never lands in the gap between sentences.
+  ///
+  /// Borrowed and returned rather than used round-robin. Alternating by index
+  /// looks equivalent but is not: the producer runs ahead of playback, so it
+  /// would eventually reuse a player that is still mid-sentence and cut it
+  /// off. Borrowing makes a busy player simply unavailable, which also bounds
+  /// how far ahead the producer can get.
+  final _players = [AudioPlayer(), AudioPlayer(), AudioPlayer()];
+  late final Queue<AudioPlayer> _freePlayers = Queue.of(_players);
+  final Queue<Completer<AudioPlayer>> _playerWaiters = Queue();
+
+  Future<AudioPlayer> _acquirePlayer() {
+    if (_freePlayers.isNotEmpty) {
+      return Future.value(_freePlayers.removeFirst());
+    }
+    final waiter = Completer<AudioPlayer>();
+    _playerWaiters.add(waiter);
+    return waiter.future;
+  }
+
+  void _releasePlayer(AudioPlayer player) {
+    if (_playerWaiters.isNotEmpty) {
+      _playerWaiters.removeFirst().complete(player);
+    } else if (!_freePlayers.contains(player)) {
+      _freePlayers.add(player);
+    }
+  }
+
+  /// Hand every player back, and unblock anything waiting for one. Without
+  /// this, cancelling a turn mid-playback leaves a borrowed player out and a
+  /// producer parked on a future that never completes.
+  void _resetPlayerPool() {
+    while (_playerWaiters.isNotEmpty) {
+      final waiter = _playerWaiters.removeFirst();
+      if (!waiter.isCompleted) waiter.complete(_players.first);
+    }
+    _freePlayers
+      ..clear()
+      ..addAll(_players);
+  }
 
   SpeechRecognizer? _recognizer;
   SpeechSynthesizer? _synth;
@@ -87,7 +123,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
   // logic was inline here and untestable.
   final _vad = VoiceActivityDetector();
 
-  static const _amplitudePollInterval = Duration(milliseconds: 150);
 
   /// How long the mic may stay open hearing nothing before we give up.
   /// Without this, a trigger level that is never crossed leaves hands-free
@@ -96,8 +131,43 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   Duration _armedFor = Duration.zero;
 
-  StreamSubscription<Amplitude>? _amplitudeSub;
+  /// Raw 16 kHz mono PCM, accumulated as the recorder streams it.
+  ///
+  /// We stream rather than record to a file because `AudioRecorder.stop()`
+  /// never completes on macOS — it hangs, taking the whole screen with it.
+  /// Holding the samples ourselves means stopping is just cancelling a
+  /// subscription, and the audio is already in hand either way.
+  final _capture = BytesBuilder(copy: false);
+  StreamSubscription<Uint8List>? _captureSub;
+
+  /// Audio waiting to be measured, so the detector gets ONE level per
+  /// [_vadFrame] rather than one per stream chunk.
+  ///
+  /// This matters more than it looks. The recorder emits chunks every few
+  /// milliseconds; the detector was designed around a 150 ms sample and its
+  /// timings are all expressed in those terms. Feeding it raw chunks made
+  /// every frame count fifteen times finer, and a level measured over 10 ms of
+  /// speech swings wildly — a vowel and a stop consonant differ by 30 dB.
+  /// Averaging over 150 ms is a far steadier signal, and restores the cadence
+  /// the thresholds were tuned for.
+  final _vadBuffer = BytesBuilder(copy: false);
+
+  /// One detector sample per this much audio. Matches
+  /// [VoiceActivityDetector.pollInterval], which its timings assume.
+  static const _vadFrameMs = 150;
+  static const _vadFrameBytes = 16000 * 2 * _vadFrameMs ~/ 1000;
+
+  /// Fires if a turn sits in a model-bound phase without progress. Nothing
+  /// else can rescue a stalled turn: the stage would stay non-idle forever,
+  /// and the screen would look dead.
+  Timer? _watchdog;
+  static const _turnStallTimeout = Duration(seconds: 90);
   double _level = -60;
+
+  /// How far through the end-of-turn pause we are, mirrored from the detector
+  /// so the UI can show it filling. A pause that is not registering should be
+  /// visible, not something the user has to infer from nothing happening.
+  double _quietProgress = 0;
   // Tied to the STT graph's window — see Models.maxRecordingSeconds.
   static const _maxRecording = Duration(
     seconds: Models.maxRecordingSeconds,
@@ -182,9 +252,12 @@ class _VoiceScreenState extends State<VoiceScreen> {
       // --- 3. The LLM in the middle. -------------------------------------
       _setStage('Loading ${Models.llmDisplayName}');
       chat = await GemmaService.instance.openChat(
-        // VoiceSession.fromChat rejects a tools-enabled chat unless you also
-        // give it an onToolCall handler, so keep this one plain.
         tools: const [],
+        // See Models.voiceTemperature: a code-switched token is worse here
+        // than on screen, because the synthesizer cannot say it.
+        temperature: Models.voiceTemperature,
+        topK: Models.voiceTopK,
+        topP: Models.voiceTopP,
         // The reply is spoken, so cap it hard — a 400-token answer would take
         // most of a minute to read out.
         maxOutputTokens: 110,
@@ -275,8 +348,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Future<void> _stopListening() async {
     _timer?.cancel();
     _timer = null;
-    await _amplitudeSub?.cancel();
-    _amplitudeSub = null;
+    await _captureSub?.cancel();
+    _captureSub = null;
     _armedFor = Duration.zero;
     _vad.reset();
     try {
@@ -340,6 +413,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
     return true;
   }
 
+  /// Set the moment the button is pressed, cleared once the recorder is
+  /// actually running. Without it, a slow microphone-permission check looks
+  /// exactly like a dead button.
+  bool _preparing = false;
+
   Future<void> _toggle() async {
     // Hands-free: the button pauses / resumes listening entirely.
     if (_mode == VoiceMode.handsFree) {
@@ -365,21 +443,51 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
+  /// Reset everything to a known-good state. Used by the watchdog and by the
+  /// button whenever a turn is in progress.
+  Future<void> _recoverToIdle({String? reason}) async {
+    _watchdog?.cancel();
+    _watchdog = null;
+    _preparing = false;
+    await _turn?.cancel();
+    await _stopAllPlayers();
+    _resetPlayerPool();
+    await _stopListening();
+    if (!mounted) return;
+    setState(() {
+      _stage = VoiceStage.idle;
+      if (reason != null) _turnError = reason;
+    });
+  }
+
   Future<void> _start({bool handsFree = false}) async {
-    if (!await _ensureMicPermission()) {
-      return;
+    if (mounted) setState(() => _preparing = true);
+    try {
+      if (!await _ensureMicPermission()) return;
+    } finally {
+      if (mounted) setState(() => _preparing = false);
     }
 
     try {
-      final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/voice_input.wav';
-      await _recorder.start(
+      _capture.clear();
+      _vadBuffer.clear();
+      await _captureSub?.cancel();
+      final chunks = await _recorder.startStream(
         const RecordConfig(
-          encoder: AudioEncoder.wav,
+          // Raw PCM, not WAV: we want the samples, not a container.
+          encoder: AudioEncoder.pcm16bits,
           sampleRate: 16000,
           numChannels: 1,
         ),
-        path: path,
+      );
+      _captureSub = chunks.listen(
+        _onAudioChunk,
+        onError: (Object e) {
+          if (mounted) {
+            setState(() => _turnError = 'Microphone stream failed: $e');
+          }
+          unawaited(_recoverToIdle());
+        },
       );
       if (!mounted) return;
       setState(() {
@@ -393,16 +501,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
         _armedFor = Duration.zero;
       });
       _vad.reset();
+      _vadBuffer.clear();
+      _quietProgress = 0;
 
-      if (handsFree) {
-        await _amplitudeSub?.cancel();
-        _amplitudeSub = _recorder
-            .onAmplitudeChanged(_amplitudePollInterval)
-            .listen(_onAmplitude, onError: (Object _) {
-              // An amplitude failure must not strand the mic open with no way
-              // to end the turn — fall back to the duration cap below.
-            });
-      }
+      // Absolute deadline for the capture, independent of the per-second
+      // counter. If anything stops that counter advancing, the recording
+      // would otherwise never end and the screen would sit in `recording`
+      // with no way forward.
+      _armWatchdog(
+        Duration(seconds: Models.maxRecordingSeconds + 15),
+        'Recording did not finish. Tap to try again.',
+      );
 
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
@@ -447,69 +556,72 @@ class _VoiceScreenState extends State<VoiceScreen> {
     }
   }
 
-  /// The voice-activity heuristic: accumulate loud time until it clears
-  /// [_minVoicedDuration] (so a single spike is not "speech"), then end the
-  /// turn after a sustained run of quiet.
-  void _onAmplitude(Amplitude amplitude) {
-    if (!mounted) return;
+  /// Every chunk of microphone audio: keep it, and in hands-free use it to
+  /// decide whether speech has started or stopped.
+  void _onAudioChunk(Uint8List chunk) {
+    if (!mounted || chunk.isEmpty) return;
+    _capture.add(chunk);
+
+    if (_mode != VoiceMode.handsFree) return;
+
+    // Accumulate until there is a full frame to measure.
+    _vadBuffer.add(chunk);
+    if (_vadBuffer.length < _vadFrameBytes) return;
+
+    final frame = _vadBuffer.toBytes();
+    _vadBuffer.clear();
+
+    final db = AudioConverter.rmsDbfs(frame);
     final wasSpeaking = _vad.speechStarted;
-    _vad.addSample(amplitude.current);
+    _vad.addSample(
+      db,
+      duration: AudioConverter.pcmDuration(frame, sampleRate: 16000),
+    );
 
     setState(() {
-      _level = amplitude.current;
+      _level = db;
+      _quietProgress = _vad.quietProgress;
       if (_vad.speechStarted && !wasSpeaking) _stage = VoiceStage.recording;
     });
 
-    if (_vad.speechStarted && !wasSpeaking) {
-    }
     if (_vad.shouldEndTurn) _stopAndRun();
   }
 
   Future<void> _stopAndRun() async {
     _timer?.cancel();
     _timer = null;
-    await _amplitudeSub?.cancel();
-    _amplitudeSub = null;
+    // The capture deadline is done with; _runTurn arms its own.
+    _watchdog?.cancel();
+    _watchdog = null;
+    await _captureSub?.cancel();
+    _captureSub = null;
     _armedFor = Duration.zero;
     _vad.reset();
+    _vadBuffer.clear();
+    _quietProgress = 0;
 
-    String? path;
-    try {
-      path = await _recorder.stop();
-    } catch (e) {
-      if (mounted) {
-        setState(() => _stage = VoiceStage.idle);
-        _toast('Recording failed: $e');
-      }
-      return;
-    }
+    // Stop the stream first, then take what we captured. `stop()` is fired
+    // and NOT awaited: on macOS it never completes, and we already hold every
+    // sample, so there is nothing to wait for.
+    await _captureSub?.cancel();
+    _captureSub = null;
+    unawaited(_recorder.stop().catchError((Object _) => null));
 
     if (!mounted) return;
     setState(() => _stage = VoiceStage.idle);
-    if (path == null) return;
 
-    Uint8List pcm;
-    try {
-      final bytes = await File(path).readAsBytes();
-      final wav = AudioConverter.parseWav(bytes);
-      pcm = AudioConverter.toPcm16kMono(
-        wav.pcm,
-        sourceSampleRate: wav.sampleRate,
-        sourceChannels: wav.channels,
-      );
-      final duration = AudioConverter.pcmDuration(pcm, sampleRate: 16000);
-      if (duration < const Duration(milliseconds: 400)) {
-        // In hands-free this is usually a door slam, not speech: re-arm
-        // silently rather than nagging the user about it.
-        if (_mode == VoiceMode.handsFree) {
-          await _rearmIfHandsFree();
-        } else {
-          _toast('That was too short — tap and speak.');
-        }
-        return;
+    final pcm = _capture.toBytes();
+    _capture.clear();
+
+    final duration = AudioConverter.pcmDuration(pcm, sampleRate: 16000);
+    if (duration < const Duration(milliseconds: 400)) {
+      // In hands-free this is usually a door slam, not speech: re-arm
+      // silently rather than nagging the user about it.
+      if (_mode == VoiceMode.handsFree) {
+        await _rearmIfHandsFree();
+      } else {
+        _toast('That was too short — tap and speak.');
       }
-    } catch (e) {
-      _toast('Could not read the recording: $e');
       return;
     }
 
@@ -530,8 +642,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     var heardNothing = false;
     try {
+      _armWatchdog();
       await for (final event in turn.run(pcm)) {
         if (!mounted) return;
+        // Any event is progress, so push the deadline out again.
+        _armWatchdog();
         switch (event) {
           case VoicePhaseChanged(:final phase):
             setState(() {
@@ -569,6 +684,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
       final f = GemmaFailure.from(e);
       setState(() => _turnError = '${f.title}: ${f.message}');
     } finally {
+      _watchdog?.cancel();
+      _watchdog = null;
       if (mounted) setState(() => _stage = VoiceStage.idle);
       // The reply has finished playing by the time the stream closes, so this
       // is the point at which it is safe to listen again. We deliberately do
@@ -577,6 +694,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
       // itself.
       await _rearmIfHandsFree(heardNothing: heardNothing);
     }
+  }
+
+  /// Arm a deadline that returns the screen to idle if nothing happens.
+  ///
+  /// Every long-running state needs one. A stage that can be entered but not
+  /// left makes the whole screen look dead, and there is no other mechanism
+  /// that would notice.
+  void _armWatchdog([Duration? timeout, String? reason]) {
+    _watchdog?.cancel();
+    _watchdog = Timer(timeout ?? _turnStallTimeout, () {
+      if (!mounted) return;
+      unawaited(
+        _recoverToIdle(
+          reason: reason ??
+              'The turn stopped responding after '
+                  '${_turnStallTimeout.inSeconds}s and was cancelled. '
+                  'Tap to try again.',
+        ),
+      );
+    });
   }
 
   /// Consecutive turns where nothing intelligible was heard. Hands-free stops
@@ -602,6 +739,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
     } else {
       _silentTurns = 0;
     }
+
+    // Settle before reopening the microphone. Reopening the instant playback
+    // finishes lets the tail of the reply — and the room's reverb of it —
+    // land in the next capture, which starts a turn the user never spoke.
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted || _mode != VoiceMode.handsFree) return;
+    if (_stage != VoiceStage.idle) return;
     await _start(handsFree: true);
   }
 
@@ -632,8 +776,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final file = File('${dir.path}/voice_reply_${_clipCounter++}.wav');
     await file.writeAsBytes(wav);
 
-    final player = _players[_nextPlayer];
-    _nextPlayer = (_nextPlayer + 1) % _players.length;
+    // Waits if every player is busy, which is what stops the producer
+    // running so far ahead that it reuses a player mid-sentence.
+    final player = await _acquirePlayer();
     await player.stop();
     await player.setFilePath(file.path);
 
@@ -642,12 +787,16 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   Future<void> _playClip(Object clip) async {
-    if (!mounted || clip is! AudioPlayer) return;
+    if (clip is! AudioPlayer) return;
     try {
-      // Completes when playback finishes, which is what paces the turn.
-      await clip.play();
+      if (mounted) {
+        // Completes when playback finishes, which is what paces the turn.
+        await clip.play();
+      }
     } catch (e) {
       if (mounted) _toast('Could not play the reply aloud: $e');
+    } finally {
+      _releasePlayer(clip);
     }
   }
 
@@ -679,7 +828,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
   void dispose() {
     _disposed = true;
     _timer?.cancel();
-    _amplitudeSub?.cancel();
+    _watchdog?.cancel();
+    _captureSub?.cancel();
     _recorder.dispose();
     for (final p in _players) {
       p.dispose();
@@ -737,8 +887,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
   }
 
   Widget _body() {
-    // `armed` and `recording` are both interactive states — the button
-    // stops them. Only the model-bound phases disable it.
     final busy = _stage == VoiceStage.transcribing ||
         _stage == VoiceStage.thinking ||
         _stage == VoiceStage.speaking;
@@ -816,13 +964,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
           mode: _mode,
           stage: _stage,
           level: _level,
+          preparing: _preparing,
+          quietProgress: _quietProgress,
+          onSensitivityChanged: (db) =>
+              setState(() => _vad.thresholdDb = db),
           triggerDb: _vad.triggerDb,
           elapsed: _elapsed,
           maxDuration: _maxRecording,
-          onTap: busy ? null : _toggle,
+          // NEVER null. A disabled button is indistinguishable from a broken
+          // one: if a turn got stuck in a model-bound phase, `busy` stayed
+          // true and every tap silently did nothing. While busy the button
+          // cancels instead.
+          onTap: busy ? _stopEverything : _toggle,
           onBargeIn: _bargeIn,
-          // Always live, in every state — hands-free previously had no way
-          // out of the loop except leaving the screen.
           onStop: _stage == VoiceStage.idle ? null : _stopEverything,
         ),
       ],

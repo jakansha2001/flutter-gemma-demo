@@ -72,6 +72,9 @@ class GemmaService {
   /// the constraint you would hit.
   Future<InferenceChat> openChat({
     bool supportImage = false,
+    double? temperature,
+    int? topK,
+    double? topP,
     bool isThinking = false,
     List<Tool> tools = const [],
     String? systemInstruction,
@@ -81,9 +84,10 @@ class GemmaService {
     // See the doc comment: images require the primary session.
     final open = supportImage ? model.createChat : model.openChat;
     return open(
-      temperature: Models.llmTemperature,
-      topK: Models.llmTopK,
-      topP: Models.llmTopP,
+      // Per-chat overrides: the voice loop runs tighter than the screens.
+      temperature: temperature ?? Models.llmTemperature,
+      topK: topK ?? Models.llmTopK,
+      topP: topP ?? Models.llmTopP,
       supportImage: supportImage,
       tools: tools,
       supportsFunctionCalls: tools.isNotEmpty,

@@ -141,6 +141,47 @@ void main() {
     });
   });
 
+  group('rmsDbfs', () {
+    Uint8List tone(int amplitude, {int samples = 1600}) {
+      final data = ByteData(samples * 2);
+      for (var i = 0; i < samples; i++) {
+        // Alternating +/- gives a constant-magnitude signal, so RMS equals
+        // the amplitude and the expected dB is exact.
+        data.setInt16(i * 2, i.isEven ? amplitude : -amplitude, Endian.little);
+      }
+      return data.buffer.asUint8List();
+    }
+
+    test('full scale is about 0 dBFS', () {
+      expect(AudioConverter.rmsDbfs(tone(32767)), closeTo(0, 0.1));
+    });
+
+    test('half scale is about -6 dBFS', () {
+      expect(AudioConverter.rmsDbfs(tone(16384)), closeTo(-6, 0.2));
+    });
+
+    test('quiet audio is well below the speech range', () {
+      expect(AudioConverter.rmsDbfs(tone(100)), lessThan(-45));
+    });
+
+    test('digital silence returns the floor, not negative infinity', () {
+      expect(AudioConverter.rmsDbfs(Uint8List(3200)), AudioConverter.silenceDb);
+      expect(AudioConverter.rmsDbfs(Uint8List(0)), AudioConverter.silenceDb);
+    });
+
+    test('louder audio always reads higher', () {
+      final quiet = AudioConverter.rmsDbfs(tone(500));
+      final medium = AudioConverter.rmsDbfs(tone(5000));
+      final loud = AudioConverter.rmsDbfs(tone(20000));
+      expect(quiet, lessThan(medium));
+      expect(medium, lessThan(loud));
+    });
+
+    test('an odd trailing byte does not crash', () {
+      expect(() => AudioConverter.rmsDbfs(Uint8List(101)), returnsNormally);
+    });
+  });
+
   group('pcmDuration', () {
     test('computes duration from frame count', () {
       // 16000 mono 16-bit frames = exactly one second.

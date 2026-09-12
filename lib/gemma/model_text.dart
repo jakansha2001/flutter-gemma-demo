@@ -38,6 +38,41 @@ abstract final class ModelText {
   static final _thinkBlock = RegExp(r'<think>.*?</think>', dotAll: true);
   static final _openThinkBlock = RegExp(r'<think>.*$', dotAll: true);
 
+  /// Anything outside Latin text, digits and ordinary punctuation.
+  ///
+  /// Deliberately keeps accented Latin (Latin-1 Supplement and Latin Extended-A)
+  /// so "café" and "naïve" survive.
+  static final _nonLatin = RegExp(
+    r'[^\u0000-\u024F\u2010-\u203A\s]',
+  );
+
+  /// Prepare [text] for an English speech synthesizer.
+  ///
+  /// Small multilingual models code-switch: a Japanese or Devanagari token can
+  /// outrank the English one mid-word, producing things like "open-ソース".
+  /// Lower sampling temperature makes this rare but not impossible, and an
+  /// English-only synthesizer has no pronunciation for such a token — it
+  /// garbles the whole phrase.
+  ///
+  /// So the SPOKEN text drops those characters. The displayed text keeps them:
+  /// silently rewriting what the user can read would hide the model's actual
+  /// output, and the point of an on-device demo is that you see what it really
+  /// said.
+  static String forSpeech(String text) {
+    final stripped = text.replaceAll(_nonLatin, '');
+    // Stripping mid-word leaves a dangling hyphen: "open-ソース" becomes
+    // "open-". Only a hyphen that directly follows a word AND is followed by
+    // whitespace or the end counts — a spaced dash used as punctuation
+    // ("Yes — it costs") has a space on its left and is left alone.
+    return stripped
+        .replaceAllMapped(
+          RegExp(r'(\w)[-–—](\s|$)'),
+          (m) => '${m[1]}${m[2]}',
+        )
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
+  }
+
   /// Strip protocol noise from [raw].
   ///
   /// [streaming] tells it the text is still arriving, so an unterminated block

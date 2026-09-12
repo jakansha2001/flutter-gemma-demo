@@ -261,7 +261,11 @@ class VoiceTurn {
         await for (final sentence in sentences) {
           if (token.cancelled) continue; // drain the stream without working
           try {
-            final pcm = await synthesize(sentence);
+            // The synthesizer is English-only; see ModelText.forSpeech. The
+            // on-screen text is untouched.
+            final speakable = ModelText.forSpeech(sentence);
+            if (speakable.isEmpty) continue;
+            final pcm = await synthesize(speakable);
             if (pcm.isEmpty || token.cancelled) continue;
             // Prepared here, not at playback time — see [prepareClip].
             final clip = await prepareClip(pcm, synthesizerSampleRate);

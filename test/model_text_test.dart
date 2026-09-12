@@ -80,6 +80,37 @@ void main() {
     });
   });
 
+  group('forSpeech', () {
+    test('drops a code-switched token the synthesizer cannot say', () {
+      // Observed on device: "open-source" came out as "open-ソース".
+      expect(
+        ModelText.forSpeech('It is an open-ソース toolkit.'),
+        'It is an open toolkit.',
+      );
+    });
+
+    test('keeps accented Latin', () {
+      expect(
+        ModelText.forSpeech('A café in Zürich, naïve but fine.'),
+        'A café in Zürich, naïve but fine.',
+      );
+    });
+
+    test('leaves ordinary English untouched', () {
+      const plain = 'Flutter is a UI toolkit made by Google in 2017.';
+      expect(ModelText.forSpeech(plain), plain);
+    });
+
+    test('drops a wholly non-Latin sentence to nothing', () {
+      expect(ModelText.forSpeech('これはテストです'), '');
+    });
+
+    test('keeps normal punctuation and digits', () {
+      const s = 'Yes — it costs 1,200 (about 40%); see "docs".';
+      expect(ModelText.forSpeech(s), s);
+    });
+  });
+
   group('whitespace', () {
     test('collapses the blank runs that removal leaves behind', () {
       const raw = 'One.\n\n\n\n<|channel>thought\nx<channel|>\n\n\nTwo.';

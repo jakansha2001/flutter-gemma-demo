@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 /// WAV <-> raw PCM helpers.
@@ -129,6 +130,49 @@ abstract final class AudioConverter {
     out.add(header.buffer.asUint8List());
     out.add(pcm);
     return out.toBytes();
+  }
+
+  /// Decode a WAV file to 16 kHz mono PCM in one call.
+  ///
+  /// Exists as a single static entry point so it can be handed to
+  /// `compute()`. A 25-second recording is 400 000 samples, and the
+  /// conversion walks them several times — on the main isolate that is a
+  /// visible stall, and it happens at exactly the moment the user has just
+  /// pressed stop and is watching for a response.
+  static Uint8List wavToPcm16kMono(Uint8List wavBytes) {
+    final wav = parseWav(wavBytes);
+    return toPcm16kMono(
+      wav.pcm,
+      sourceSampleRate: wav.sampleRate,
+      sourceChannels: wav.channels,
+    );
+  }
+
+  /// Level of a PCM buffer in dBFS, for voice activity detection.
+  ///
+  /// Computed here rather than read from the recorder's own amplitude API.
+  /// We already hold the samples, so this removes a platform dependency that
+  /// is not uniformly implemented — and it stays correct on any platform
+  /// where that API reports nothing.
+  ///
+  /// Returns [silenceDb] for an empty or digitally silent buffer, so callers
+  /// never have to handle -infinity.
+  static const silenceDb = -100.0;
+
+  static double rmsDbfs(Uint8List pcm16) {
+    final count = pcm16.length ~/ 2;
+    if (count == 0) return silenceDb;
+
+    final data = ByteData.sublistView(pcm16);
+    var sumSquares = 0.0;
+    for (var i = 0; i < count; i++) {
+      final sample = data.getInt16(i * 2, Endian.little) / 32768.0;
+      sumSquares += sample * sample;
+    }
+    final rms = math.sqrt(sumSquares / count);
+    if (rms <= 0) return silenceDb;
+    final db = 20 * (math.log(rms) / math.ln10);
+    return db < silenceDb ? silenceDb : db;
   }
 
   /// Duration of a raw PCM buffer, for the recording timer.
