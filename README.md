@@ -1,153 +1,113 @@
 # Gemma On-Device Demo
 
-A Flutter app that runs Google's Gemma 4 E2B locally — vision, reasoning,
-function calling and a voice loop, with no server involved. The network is used
-once, to download the model. After that you can put the device in airplane mode
-and everything still works.
+A Flutter app that runs Google's Gemma 4 E2B model directly on your phone or Mac. It can look at a photo, show its reasoning, use functions in the app, and hold a spoken conversation. The internet is only used once, to download the model. After that you can switch on airplane mode and everything still works.
 
-Built on [flutter_gemma](https://pub.dev/packages/flutter_gemma) 1.8.
+I built it for my talk, **Building On-Device AI Apps with Flutter and Gemma**, using [flutter_gemma](https://pub.dev/packages/flutter_gemma) 1.8.
 
-## What's in it
+## What it does
 
-**Vision chat** — attach a photo and ask about it. Streaming, multimodal.
+- **Vision chat**: attach a photo and ask about it. The answer appears as it's written.
+- **Thinking mode**: the model works through the problem first. Its reasoning shows in a separate section, above the answer.
+- **Function calling**: the model can use six tools that change what's on screen, like adding a task to a to-do list or changing the app's accent colour. Ask it to add a task and then read your list back, and it uses two tools in a row.
+- **Voice loop**: ask a question out loud and hear the answer. Three models run on the device: one turns your speech into text, Gemma writes the reply, and one reads it aloud. It works with push-to-talk or hands-free.
 
-**Thinking mode** — the same model with `isThinking: true`, so the reasoning
-arrives on a separate channel from the answer and renders in its own collapsible
-block.
+## Screenshots
 
-**Function calling** — six tools that act on live app state. Ask it to add a
-task and then read your list back, and it chains two calls in one turn.
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home.jpg" width="280" alt="Home screen listing the four demos"/></td>
+    <td><img src="docs/screenshots/vision.jpg" width="280" alt="Vision chat describing a photo of red roses"/></td>
+    <td><img src="docs/screenshots/thinking.jpg" width="280" alt="Thinking mode solving the bat-and-ball question"/></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/function-calling.jpg" width="280" alt="Function calling marking a task as done"/></td>
+    <td><img src="docs/screenshots/voice.jpg" width="280" alt="Voice loop speaking a reply"/></td>
+    <td></td>
+  </tr>
+</table>
 
-**Voice loop** — speak, and it transcribes, answers, and speaks back. Three
-models on device, in push-to-talk or hands-free.
+## From the talk
 
-## Running it
+- **Slides:** [akanshajain.dev/talks/on-device-ai](https://akanshajain.dev/talks/on-device-ai/)
+- **Codelab:** [akanshajain.dev/codelabs/on-device-ai](https://akanshajain.dev/codelabs/on-device-ai/), a step-by-step guide to building a smaller version of this app
+- **Article:** [Why I think on-device AI changes mobile architecture](https://medium.com/flutter-community/why-i-think-on-device-ai-changes-mobile-architecture-3cc6b09afd83)
 
-The project pins Flutter 3.47.3 with [FVM](https://fvm.app), so it won't
-disturb your other projects. flutter_gemma 1.x needs Dart 3.12 / Flutter 3.44 or
-newer.
+## Run it
+
+This project uses [FVM](https://fvm.app) to pin Flutter 3.47.3, so it won't affect your other Flutter projects. flutter_gemma 1.x needs Flutter 3.44 or newer.
 
 ```bash
-dart pub global activate fvm   # if you don't have it
-fvm install                    # reads .fvmrc
+dart pub global activate fvm   # if you don't have FVM yet
+fvm install                    # installs the version in .fvmrc
 fvm flutter pub get
-fvm flutter run -d macos       # or a connected phone
+fvm flutter run -d macos       # or pick a connected phone
 ```
 
-Use `fvm flutter`, not `flutter` — an older SDK on your PATH will refuse the
-dependencies.
+Use `fvm flutter`, not plain `flutter`. An older Flutter on your machine will refuse to install the dependencies.
 
-There's no Hugging Face token to set up. Every model here lives in a public
-repo.
+You don't need a Hugging Face account or token. Every model this app uses is public.
 
 ## Models
 
-| | Model | Size |
-|---|---|---|
-| LLM | Gemma 4 E2B (`.litertlm`) | 2.4 GB |
-| Speech-to-text | Whisper Tiny (30s window) | 151 MB |
-| Text-to-speech | Matcha-TTS | 94 MB |
+| What it does | Model | Download |
+| --- | --- | --- |
+| Understands text and images, writes replies | Gemma 4 E2B (`.litertlm`) | 2.6 GB |
+| Turns speech into text | Whisper Tiny | 151 MB |
+| Turns text into speech | Matcha-TTS | 94 MB |
 
-The LLM downloads on first use and is shared by all four demos. The speech
-models only download if you open the voice demo.
+Gemma downloads the first time you open any demo, and all four demos share it. The two speech models only download when you open the voice loop.
 
-A few notes on why these specific builds:
+Why these particular models:
 
-- `.litertlm` rather than `.task` — one file covers Android, iOS and macOS
-  through the same FFI engine, so the app never needs `flutter_gemma_mediapipe`
-  at all. `.task` is MediaPipe-only and can't load on desktop.
-- Whisper Tiny over the smaller Moonshine Tiny, because Moonshine's shipped
-  graph is a fixed **five second** window. Anything longer is silently
-  truncated, which makes a conversational turn impossible.
-- Matcha over Inflect-Nano-v2. Inflect is 8 MB and roughly 90x real time, which
-  is tempting, but its output was unintelligible in testing.
+- **The `.litertlm` format**, because one file works on Android, iOS and macOS. The older `.task` format only runs through MediaPipe and doesn't work on desktop.
+- **Whisper Tiny instead of Moonshine Tiny**, because the Moonshine build only listens to five seconds of audio and quietly cuts off anything longer.
+- **Matcha instead of Inflect-Nano**, because Inflect is smaller and faster, but its speech was hard to understand in my testing.
 
 ## Requirements
 
-**Android** — arm64 device, API 26+, ~3 GB free RAM. x86_64 emulators won't
-work: the LiteRT-LM engine ships arm64 prebuilts only, and the build is
-restricted with `abiFilters` so you find out at build time instead of at engine
-init.
+- **Android:** an arm64 phone on Android 8.0 (API 26) or newer, with plenty of free memory. Most emulators on Intel Macs and PCs won't work, because the engine only includes arm64 code. The build is limited to arm64, so you find out when you build rather than when the model starts.
+- **iOS:** iOS 15.0 or newer, on a real iPhone. The Simulator can only use the CPU, because it can't give the GPU a single block of memory larger than 256 MB, and the model needs more.
+- **macOS:** an Apple Silicon Mac on macOS 12.0 or newer. This is the easiest target while developing.
 
-**iOS** — 15.0+, arm64 device. The Simulator runs CPU-only, because Metal's
-simulator caps single allocations at 256 MB and the model's tensors exceed
-that.
+Web isn't supported. The web build of Gemma 4 E2B only handles text, so the vision demo wouldn't work.
 
-**macOS** — Apple Silicon, 12.0+. Metal GPU, engine starts in about two
-seconds. This is the easiest target to develop against.
+## How the code is organised
 
-Web isn't supported here. `.litertlm` on web is a text-only preview, so vision
-would need a separate MediaPipe build and a second engine.
-
-## Layout
-
-```
+```text
 lib/
-├── main.dart                 FlutterGemma.initialize — engine registration
-├── theme.dart                design tokens and shared widgets
+├── main.dart                 starts flutter_gemma and registers the engine
+├── theme.dart                colours, type and shared styles
 ├── gemma/
-│   ├── model_catalog.dart    every model URL and setting, in one place
-│   ├── gemma_service.dart    loads the weights once, hands out chats
-│   ├── demo_tools.dart       tool declarations and their implementations
-│   ├── gemma_failure.dart    exceptions → something a user can act on
-│   ├── model_text.dart       strips protocol noise from the text channel
-│   ├── sentence_chunker.dart splits a streaming reply into speakable units
-│   ├── voice_activity_detector.dart  when speech starts and stops
-│   └── voice_turn.dart       transcribe → generate → speak, overlapped
-├── screens/                  home, download gate, chat, tools, voice
-├── widgets/                  bubbles, composer, state views, voice controls
-└── utils/audio_converter.dart  WAV ⇄ PCM
+│   ├── model_catalog.dart    every model link and setting in one place
+│   ├── gemma_service.dart    loads the model once and opens conversations
+│   ├── demo_tools.dart       the tools the model can use, and what they do
+│   ├── gemma_failure.dart    turns errors into messages people can act on
+│   ├── model_text.dart       cleans up the model's text before it's shown
+│   ├── sentence_chunker.dart splits a reply into sentences as it arrives
+│   ├── voice_activity_detector.dart  decides when you start and stop talking
+│   └── voice_turn.dart       listen, think, speak: one voice turn
+├── screens/                  home, model download, chat, tools, voice
+├── widgets/                  chat bubbles, message box, voice controls
+└── utils/audio_converter.dart  converts between WAV files and raw audio
 ```
 
-## Things worth knowing if you're reading the code
+## Things that tripped me up
 
-**The model loads once.** `GemmaService` owns the single `InferenceModel` and
-each screen calls `openChat()` for its own conversation on top. Weights are the
-expensive part; a session is just its own context. Screens close their chat on
-dispose and never close the model.
+**Load the model once.** Loading the model is the slow, memory-heavy part. `GemmaService` loads it a single time, and each screen opens its own conversation on top of it. Leaving a screen closes that conversation, never the model.
 
-**Except for vision.** On the `.litertlm` engine, concurrent sessions replay
-their history as text when the engine switches between them, so they reject
-images outright. Multimodal has to go through `createChat()`, which owns the
-model's primary session. `GemmaService.openChat` branches on that. It's safe
-here because the app is a navigation stack — only one screen holds a chat at a
-time.
+**Photos only work in the main conversation.** flutter_gemma has two ways to start a conversation. `createChat()` uses the model's main conversation. `openChat()` opens extra conversations that share the same loaded model. The engine keeps only one conversation active at a time, and when it switches it rebuilds the others from their saved text. A photo can't be rebuilt from text, so extra conversations reject images. The vision demo uses `createChat()`. That's safe here because only one screen is open at a time.
 
-**Two settings that are easy to get wrong.** `ModelType.gemma4`, not
-`gemmaIt` — it routes tool declarations through Gemma 4's native chat template.
-And `ModelFileType.litertlm` explicitly, because the file type selects the
-engine and is never inferred from the filename; it defaults to `.task`, which
-fails on a `.litertlm` file with "Invalid magic number".
+**Two settings you have to set yourself.** Use `ModelType.gemma4`, not `gemmaIt`, so tools go through Gemma 4's own tool-calling format. And always pass `ModelFileType.litertlm`. The file type decides which engine opens the model, it isn't worked out from the file name, and it defaults to `.task`, which sends your file to an engine that can't read it.
 
-**Don't trust the text channel.** Gemma 4 sends tool calls and reasoning
-through the same stream as the answer. flutter_gemma strips the markers, but it
-classifies a turn by its first character — so a turn that starts with text and
-then emits a tool-call JSON leaks the whole thing. `ModelText.sanitize` cleans
-the accumulated buffer (not individual tokens; a marker can span two).
+**Clean up the text before showing it.** Gemma 4 sends tool calls and reasoning through the same stream as the answer. flutter_gemma usually separates them, but I still saw raw tool-call data and reasoning markers show up in the visible reply. `ModelText.sanitize` cleans the whole reply received so far rather than each new piece, because a marker can be split across two pieces.
 
-**Tools never throw.** `DemoTools.execute` returns an `{'error': ...}` map
-instead. A thrown exception tears down the generation stream, whereas an error
-*value* goes back to the model, which can correct itself.
+**Tools return errors instead of throwing.** If a tool throws an exception, it ends the model's reply. `DemoTools.execute` returns an `{'error': ...}` message instead. The model reads it and can correct itself or explain what went wrong.
 
-**The voice loop doesn't use `VoiceSession`.** The package ships one, and it's
-the right starting point, but `synthesize` is batch — full text in, full audio
-out — so it can't speak until generation finishes. That's several seconds of
-dead air with the finished reply already on screen. `VoiceTurn` drives the
-three models directly, cutting the reply into sentences and synthesizing each
-as it completes, so audio starts after the first sentence. Synthesis of
-sentence N+1 overlaps playback of N.
+**The voice loop speaks sentence by sentence.** flutter_gemma_speech includes `VoiceSession`, which is a good place to start. But text-to-speech needs the complete text before it can make any audio, so the app would stay silent until the whole reply was written. `VoiceTurn` splits the reply into sentences as they arrive and starts preparing each one's audio straight away, so speaking starts after the first sentence. Even so, in my testing on a Mac, turning speech into text and text into speech are the slowest steps in the loop.
 
-**Voice activity detection is ours.** The package ships none. A fixed dB
-threshold doesn't work, because the level a quiet room sits at depends entirely
-on the microphone and its gain. `VoiceActivityDetector` learns the room's noise
-floor as a low percentile of a rolling window — deliberately not an average,
-which climbs while you're speaking and drags the trigger up with it.
+**Hands-free listening uses a volume threshold.** The package doesn't detect when you start or stop talking, so `VoiceActivityDetector` does it. Speech starts when the microphone level goes above a threshold, which is −40 dB by default, and ends after about 2.6 seconds of quiet. If a fan or air conditioner keeps setting it off, you can adjust the sensitivity on the voice screen.
 
-**Sampling is narrower than Google's defaults.** They publish temperature 1.0 /
-topK 64 / topP 0.95 for Gemma 4. On a 2B multilingual model that width causes
-code switching: the vocabulary holds the same concept in many languages, and a
-non-English token can outrank the English one mid-sentence. 0.7 / 40 / 0.9 plus
-a language instruction makes it rare. The cost is slightly less varied phrasing.
+**Less randomness than Google's defaults.** Google suggests temperature 1.0, topP 0.95 and topK 64 for Gemma 4. These settings control how adventurous the model is when picking each next word. With them, this small model sometimes switched language mid-sentence, like dropping in the Japanese word for "source". Chat uses 0.7, 0.9 and 40, voice uses a temperature of 0.3, and the system instruction names the language. That makes it rare, at the cost of slightly less varied wording.
 
 ## Tests
 
@@ -155,42 +115,31 @@ a language instruction makes it rare. The cost is slightly less varied phrasing.
 fvm flutter test
 ```
 
-100 tests. They cover the parts where being wrong is invisible until someone
-notices at the worst moment: the tool executor's contract that it never throws
-whatever the model sends it, WAV/PCM conversion including malformed input, the
-sentence splitter's refusal to break on `3.14` or `Dr. Bhatt`, the text
-sanitizer against real leaked output, voice activity detection across quiet and
-noisy rooms, and the voice pipeline end to end with fake models — where every
-test asserts the stream actually terminates, because a controller that never
-closes looks exactly like a slow model.
+There are 116 tests. They focus on the parts where a bug is easy to miss until it matters:
+
+- **Tools:** the tool code never throws, whatever the model sends.
+- **Audio:** WAV and raw audio convert correctly, including broken input.
+- **Sentences:** the sentence splitter doesn't break on things like "3.14" or "Dr. Bhatt".
+- **Text cleanup:** it's tested against real output that leaked.
+- **Voice detection:** it's tested in quiet and noisy conditions.
+- **Voice loop:** it's tested end to end with fake models, checking that every turn finishes instead of hanging.
 
 ## Platform setup that isn't obvious
 
-**Android** needs `libvndksupport.so` declared in the manifest. Without it the
-OpenCL loader can't open the vendor driver, the engine falls back to WebGPU,
-and some Mali GPUs hard-freeze in the vision encoder.
+**Android** declares `libvndksupport.so` in the manifest. Without it the GPU driver can't load, the engine falls back to a different GPU path, and some phones with Mali GPUs freeze while reading an image.
 
-**Android 14+** crashes on `foreground: true` downloads unless the app declares
-`FOREGROUND_SERVICE_DATA_SYNC` and overrides WorkManager's
-`SystemForegroundService` with `foregroundServiceType="dataSync"`. Both are in
-the manifest.
+**Android 14 and newer** crash on large downloads that run in the foreground unless the app declares the `FOREGROUND_SERVICE_DATA_SYNC` permission and marks WorkManager's `SystemForegroundService` as a data sync service. Both are in the manifest.
 
-**macOS** needs the `post_install` block in `macos/Podfile`. Three upstream
-Apple dylibs were linked without `-Wl,-headerpad_max_install_names`, so Native
-Assets can't rewrite their install names and the plugin stages them through an
-Xcode build phase instead. The sandbox entitlements also need JIT, library
-validation disabled and unsigned executable memory.
+**macOS** has a `post_install` step in `macos/Podfile`. A few of the GPU libraries can't be bundled into the app automatically, so this step adds a build phase that copies them in. The app's macOS permissions (entitlements) also allow running code generated at runtime, loading those libraries, network access, opening files you choose, and using the microphone.
 
-The iOS-only `com.apple.developer.kernel.*` entitlements are deliberately
-absent from the macOS build — they do nothing there and force Xcode to demand a
-development signing certificate.
+The iPhone-only memory entitlements are left out of the macOS build on purpose. They do nothing on a Mac, and including them makes Xcode ask for a development signing certificate.
 
 ## Credits
 
-[flutter_gemma](https://github.com/DenisovAV/flutter_gemma) by Sasha Denisov.
-[Gemma](https://ai.google.dev/gemma) by Google DeepMind. Model builds from
-[litert-community](https://huggingface.co/litert-community).
+- [flutter_gemma](https://github.com/DenisovAV/flutter_gemma) by Sasha Denisov
+- [Gemma](https://ai.google.dev/gemma) by Google DeepMind
+- Model builds from [litert-community](https://huggingface.co/litert-community) on Hugging Face
 
-## License
+## Author
 
-MIT
+**Akansha Jain** — Senior Software Engineer, Google Women Techmakers Ambassador, Co-organizer of Flutter Conf India and Flutter Delhi.
