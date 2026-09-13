@@ -1,0 +1,1760 @@
+
+<!doctype html>
+
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <meta name="theme-color" content="#1A73E8">
+  <meta charset="UTF-8">
+  <title>Building On-Device AI Apps with Flutter and Gemma</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="stylesheet" href="https://storage.googleapis.com/claat-public/codelab-elements.css">
+  <style>
+    .success {
+      color: #1e8e3e;
+    }
+    .error {
+      color: red;
+    }
+  </style>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wdth,wght,ROND@6..144,25..151,1..1000,0..100&family=Google+Sans+Code:wght@300..800&display=swap">
+  <style>
+    google-codelab, google-codelab *:not(.material-icons):not(i) {
+      font-family: "Google Sans Flex", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    google-codelab code, google-codelab pre, google-codelab pre * {
+      font-family: "Google Sans Code", "Roboto Mono", "Source Code Pro", monospace !important;
+    }
+    google-codelab-step h2.step-title { font-weight: 500; letter-spacing: -0.01em; }
+    google-codelab-step h3 { font-weight: 500; }
+    google-codelab-step table code { font-size: 0.92em; }
+  </style>
+</head>
+<body>
+  <google-codelab                   id="flutter-gemma-on-device"
+                  title="Building On-Device AI Apps with Flutter and Gemma"
+                  environment="web"
+                  feedback-link="https://github.com/jakansha2001/flutter-gemma-demo/issues">
+    
+      <google-codelab-step label="Overview" duration="4">
+        <p>In this codelab you build a Flutter app that runs <strong>Gemma 4 E2B</strong>, Google&#39;s open model, entirely on the device. Once the model is downloaded, every token is generated on the phone or laptop in your hand. Nothing is sent to a server, there is no API key, and the app keeps working in airplane mode.</p>
+<p>The app uses <a href="https://pub.dev/packages/flutter_gemma" target="_blank">flutter_gemma</a>, a Flutter plugin that loads <code>.litertlm</code> models through Google&#39;s LiteRT-LM runtime.</p>
+<h2 is-upgraded>What you&#39;ll build</h2>
+<p>A small app with four on-device features:</p>
+<ul>
+<li><strong>Chat</strong> with replies that stream in token by token.</li>
+<li><strong>Vision</strong>: attach a photo and ask questions about it.</li>
+<li><strong>Thinking</strong>: watch the model reason through a problem before it answers.</li>
+<li><strong>Tools</strong>: the model calls Dart functions in your app. It adds tasks to a to-do list and recolors the app bar.</li>
+</ul>
+<h2 class="checklist" is-upgraded>What you&#39;ll learn</h2>
+<ul class="checklist">
+<li>How flutter_gemma 1.x is split into a core package and opt-in engine packages</li>
+<li>How to download a 2.6 GB model once, with progress, and load it onto the GPU</li>
+<li>How to stream text, send images, show reasoning tokens, and run a function-calling loop</li>
+<li>The platform setup Android, iOS and macOS each need</li>
+<li>The mistakes that cost the most time when building this, so you can skip them</li>
+</ul>
+<h2 is-upgraded>What you&#39;ll need</h2>
+<ul>
+<li>Flutter <strong>3.44 or newer</strong> (flutter_gemma 1.x requires Dart 3.12+)</li>
+<li>An IDE such as VS Code or Android Studio</li>
+<li>About <strong>3 GB of free space on the test device</strong> for the model, and a fast connection for the first download</li>
+<li>One of: <ul>
+<li>A physical <strong>Android</strong> phone with an arm64 CPU. Recent, high-memory phones work best.</li>
+<li>A physical <strong>iPhone</strong> and a Mac with Xcode</li>
+<li>An <strong>Apple Silicon Mac</strong>, to run the app as a macOS desktop app</li>
+</ul>
+</li>
+</ul>
+<aside class="warning"><p> The model is loaded entirely into memory. On phones with little RAM the operating system can kill the app while the model loads. If that happens, try a device with more memory.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="What&#39;s new in flutter_gemma 1.x" duration="5">
+        <p>If you used flutter_gemma 0.x (for example with Gemma 3n), a few things work differently now. This section explains why the code in this codelab looks the way it does.</p>
+<h2 is-upgraded>The package is modular</h2>
+<p><code>flutter_gemma</code> is now a <strong>core</strong> package: model management, chat sessions and the response types. It ships without an inference engine. You add the engine you need and register it at startup:</p>
+<table>
+<tr><td colspan="1" rowspan="1"><p>Package</p>
+</td><td colspan="1" rowspan="1"><p>What it adds</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma_litertlm</code></p>
+</td><td colspan="1" rowspan="1"><p>Runs <code>.litertlm</code> models through LiteRT-LM. Used in this codelab.</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma_mediapipe</code></p>
+</td><td colspan="1" rowspan="1"><p>Runs older <code>.task</code> / <code>.bin</code> models through MediaPipe</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma_speech</code></p>
+</td><td colspan="1" rowspan="1"><p>On-device speech-to-text and text-to-speech</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma_rag_sqlite</code>, <code>flutter_gemma_rag_qdrant</code></p>
+</td><td colspan="1" rowspan="1"><p>Vector stores for on-device RAG</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma_agent</code></p>
+</td><td colspan="1" rowspan="1"><p>Skills the model can run through function calling</p>
+</td></tr>
+</table>
+<p>Your app only bundles the native libraries for the packages you add.</p>
+<h2 is-upgraded>Gemma 4 E2B, no token required</h2>
+<p>This codelab uses <a href="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm" target="_blank">Gemma 4 E2B in LiteRT-LM format</a> from the <code>litert-community</code> organization on Hugging Face. The download is public, so there is <strong>no Hugging Face account, access request or token</strong> to manage. The &#34;E&#34; in E2B stands for <em>effective</em> parameters. Gemma 4 is released under the Apache 2.0 license.</p>
+<p>Gemma 4 E2B accepts text and images, can stream its reasoning, and supports function calling natively, and you use all of these below.</p>
+<h2 is-upgraded>One chat call covers everything</h2>
+<p>A single <code>InferenceChat</code> streams a sealed <code>ModelResponse</code> type: <code>TextResponse</code>, <code>ThinkingResponse</code>, <code>FunctionCallResponse</code> and <code>ParallelFunctionCallResponse</code>. Because the type is sealed, a Dart <code>switch</code> over it is checked for exhaustiveness at compile time.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Set up your environment" duration="5">
+        <h2 is-upgraded>Check your Flutter version</h2>
+<pre><code language="language-bash" class="language-bash">flutter --version
+</code></pre>
+<p>You need Flutter <strong>3.44.0 or newer</strong>. That&#39;s the minimum flutter_gemma 1.x declares, together with Dart 3.12. The packages use Dart build hooks (Native Assets) to download and bundle the LiteRT-LM native libraries when you build.</p>
+<p>If you&#39;re on an older version, upgrade:</p>
+<pre><code language="language-bash" class="language-bash">flutter upgrade
+</code></pre>
+<aside class="special"><p><strong>Can&#39;t upgrade your global Flutter?</strong> Use <a href="https://fvm.app" target="_blank">FVM</a> to pin a newer Flutter for this one project and leave your other projects alone: <code>fvm use stable</code> inside the project folder, then prefix commands with <code>fvm</code>, for example <code>fvm flutter run</code>.</p>
+</aside>
+<h2 is-upgraded>Check your device</h2>
+<pre><code language="language-bash" class="language-bash">flutter devices
+</code></pre>
+<p>Make sure your phone or Mac appears in the list.</p>
+<aside class="warning"><p> The <code>.litertlm</code> engine on Android ships <strong>arm64-v8a</strong> libraries only. x86 and x86_64 Android emulators can&#39;t load it. Use a physical arm64 phone. On an Apple Silicon Mac, the Android emulator runs arm64 images natively.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Create the project and add packages" duration="4">
+        <p>Create a new Flutter project for Android, iOS and macOS:</p>
+<pre><code language="language-bash" class="language-bash">flutter create --platforms=android,ios,macos gemma_codelab
+cd gemma_codelab
+</code></pre>
+<p>Add the three packages this app needs:</p>
+<pre><code language="language-bash" class="language-bash">flutter pub add flutter_gemma flutter_gemma_litertlm image_picker
+</code></pre>
+<p>Your <code>pubspec.yaml</code> dependencies now look like this (patch versions may be newer):</p>
+<pre><code language="language-yaml" class="language-yaml">dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_gemma: ^1.8.1
+  flutter_gemma_litertlm: ^1.6.3
+  image_picker: ^1.2.3
+</code></pre>
+<table>
+<tr><td colspan="1" rowspan="1"><p>Package</p>
+</td><td colspan="1" rowspan="1"><p>Why</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma</code></p>
+</td><td colspan="1" rowspan="1"><p>Model download, chat sessions, response types</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>flutter_gemma_litertlm</code></p>
+</td><td colspan="1" rowspan="1"><p>The engine that runs <code>.litertlm</code> models on the GPU</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>image_picker</code></p>
+</td><td colspan="1" rowspan="1"><p>Choosing a photo for the vision step</p>
+</td></tr>
+</table>
+<p>Delete the default widget test. It refers to the counter app you&#39;re about to replace:</p>
+<pre><code language="language-bash" class="language-bash">rm test/widget_test.dart
+</code></pre>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Configure Android" duration="5">
+        <p>Skip this step if you&#39;re not targeting Android.</p>
+<h2 is-upgraded>Restrict the build to arm64</h2>
+<p>The <code>.litertlm</code> engine only ships arm64 libraries. Restricting the ABI stops you from building an APK that installs on an unsupported device and then crashes when the engine starts.</p>
+<p>Open <code>android/app/build.gradle.kts</code> and add <code>ndk</code> to <code>defaultConfig</code>:</p>
+<pre><code language="language-kotlin" class="language-kotlin">defaultConfig {
+    // ...keep the generated values (applicationId, minSdk, and so on)...
+    ndk { abiFilters += listOf(&#34;arm64-v8a&#34;) }
+}
+</code></pre>
+<h2 is-upgraded>Update the manifest</h2>
+<p>Replace <code>android/app/src/main/AndroidManifest.xml</code> with the version below. It&#39;s the default Flutter manifest, without the generated comments, plus four additions:</p>
+<ol type="1">
+<li><strong><code>INTERNET</code></strong> in the main manifest. Flutter only adds it to debug builds by default, and a release build needs it to download the model.</li>
+<li><strong>Foreground download permissions.</strong> The model downloads with <code>foreground: true</code>, which shows a progress notification and keeps a long download running.</li>
+<li><strong>The </strong><strong><code>SystemForegroundService</code></strong><strong> override.</strong> On Android 14+ (API 34), a foreground download crashes without <code>foregroundServiceType="dataSync"</code>. flutter_gemma leaves this to the app on purpose because <code>FOREGROUND_SERVICE_DATA_SYNC</code> is a Play-sensitive permission.</li>
+<li><strong>Native GPU libraries.</strong> These let the GPU backend load the vendor&#39;s OpenCL driver.</li>
+</ol>
+<pre><code language="language-xml" class="language-xml">&lt;manifest xmlns:android=&#34;http://schemas.android.com/apk/res/android&#34;
+    xmlns:tools=&#34;http://schemas.android.com/tools&#34;&gt;
+
+    &lt;uses-permission android:name=&#34;android.permission.INTERNET&#34; /&gt;
+    &lt;uses-permission android:name=&#34;android.permission.POST_NOTIFICATIONS&#34; /&gt;
+    &lt;uses-permission android:name=&#34;android.permission.FOREGROUND_SERVICE_DATA_SYNC&#34; /&gt;
+
+    &lt;application
+        android:label=&#34;gemma_codelab&#34;
+        android:name=&#34;${applicationName}&#34;
+        android:icon=&#34;@mipmap/ic_launcher&#34;&gt;
+        &lt;activity
+            android:name=&#34;.MainActivity&#34;
+            android:exported=&#34;true&#34;
+            android:launchMode=&#34;singleTop&#34;
+            android:taskAffinity=&#34;&#34;
+            android:theme=&#34;@style/LaunchTheme&#34;
+            android:configChanges=&#34;orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode&#34;
+            android:hardwareAccelerated=&#34;true&#34;
+            android:windowSoftInputMode=&#34;adjustResize&#34;&gt;
+            &lt;meta-data
+              android:name=&#34;io.flutter.embedding.android.NormalTheme&#34;
+              android:resource=&#34;@style/NormalTheme&#34;
+              /&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name=&#34;android.intent.action.MAIN&#34;/&gt;
+                &lt;category android:name=&#34;android.intent.category.LAUNCHER&#34;/&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+        &lt;meta-data
+            android:name=&#34;flutterEmbedding&#34;
+            android:value=&#34;2&#34; /&gt;
+
+        &lt;!-- Android 14+: foreground model download --&gt;
+        &lt;service
+            android:name=&#34;androidx.work.impl.foreground.SystemForegroundService&#34;
+            android:foregroundServiceType=&#34;dataSync&#34;
+            tools:node=&#34;merge&#34; /&gt;
+
+        &lt;!-- GPU backend: vendor OpenCL driver --&gt;
+        &lt;uses-native-library android:name=&#34;libvndksupport.so&#34; android:required=&#34;false&#34;/&gt;
+        &lt;uses-native-library android:name=&#34;libOpenCL.so&#34; android:required=&#34;false&#34;/&gt;
+        &lt;uses-native-library android:name=&#34;libOpenCL-car.so&#34; android:required=&#34;false&#34;/&gt;
+        &lt;uses-native-library android:name=&#34;libOpenCL-pixel.so&#34; android:required=&#34;false&#34;/&gt;
+    &lt;/application&gt;
+    &lt;queries&gt;
+        &lt;intent&gt;
+            &lt;action android:name=&#34;android.intent.action.PROCESS_TEXT&#34;/&gt;
+            &lt;data android:mimeType=&#34;text/plain&#34;/&gt;
+        &lt;/intent&gt;
+    &lt;/queries&gt;
+&lt;/manifest&gt;
+</code></pre>
+<aside class="special"><p><code>image_picker</code> needs no extra Android permissions. It opens the system camera or photo picker, which handle access themselves.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Configure iOS" duration="4">
+        <p>Skip this step if you&#39;re not targeting iOS.</p>
+<h2 is-upgraded>Deployment target</h2>
+<p>flutter_gemma needs <strong>iOS 15.0</strong> or later. Projects created with Flutter 3.47 already target 15.0. To check, open <code>ios/Runner.xcworkspace</code> in Xcode, select the <strong>Runner</strong> target, and look at <strong>Minimum Deployments</strong>.</p>
+<aside class="special"><p> New Flutter projects use Swift Package Manager and have no <code>Podfile</code>. flutter_gemma works without one on iOS. Set the deployment target on the Runner target, as above.</p>
+</aside>
+<h2 is-upgraded>Info.plist</h2>
+<p>Open <code>ios/Runner/Info.plist</code> and add these keys inside the top-level <code>dict</code> element. The camera and photo library descriptions are required by <code>image_picker</code>. <code>UIFileSharingEnabled</code> is part of flutter_gemma&#39;s iOS setup.</p>
+<pre><code language="language-xml" class="language-xml">&lt;key&gt;NSCameraUsageDescription&lt;/key&gt;
+&lt;string&gt;Take a photo to ask Gemma about it. The photo stays on this device.&lt;/string&gt;
+&lt;key&gt;NSPhotoLibraryUsageDescription&lt;/key&gt;
+&lt;string&gt;Choose a photo to ask Gemma about it. The photo stays on this device.&lt;/string&gt;
+&lt;key&gt;UIFileSharingEnabled&lt;/key&gt;
+&lt;true/&gt;
+</code></pre>
+<h2 is-upgraded>Memory entitlements</h2>
+<p>iOS limits how much memory an app can use, and a 2.6 GB model gets close to that limit. In Xcode, select <strong>Runner → Signing &amp; Capabilities → + Capability</strong> and add <strong>Increased Memory Limit</strong> and <strong>Extended Virtual Addressing</strong>. Xcode creates <code>ios/Runner/Runner.entitlements</code> for you:</p>
+<pre><code language="language-xml" class="language-xml">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;
+&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST 1.0//EN&#34; &#34;http://www.apple.com/DTDs/PropertyList-1.0.dtd&#34;&gt;
+&lt;plist version=&#34;1.0&#34;&gt;
+&lt;dict&gt;
+	&lt;key&gt;com.apple.developer.kernel.extended-virtual-addressing&lt;/key&gt;
+	&lt;true/&gt;
+	&lt;key&gt;com.apple.developer.kernel.increased-memory-limit&lt;/key&gt;
+	&lt;true/&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;
+</code></pre>
+<aside class="warning"><p> These are iOS entitlements only. Don&#39;t add them to the macOS entitlement files: Xcode would then require a development signing certificate for your macOS build.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Configure macOS" duration="6">
+        <p>Skip this step if you&#39;re not targeting macOS.</p>
+<h2 is-upgraded>Entitlements</h2>
+<p>macOS apps run in a sandbox. Add these keys to <strong>both </strong><code>macos/Runner/DebugProfile.entitlements</code> and <code>macos/Runner/Release.entitlements</code>, inside the <code>dict</code> element:</p>
+<pre><code language="language-xml" class="language-xml">&lt;key&gt;com.apple.security.network.client&lt;/key&gt;
+&lt;true/&gt;
+&lt;key&gt;com.apple.security.cs.disable-library-validation&lt;/key&gt;
+&lt;true/&gt;
+&lt;key&gt;com.apple.security.files.user-selected.read-only&lt;/key&gt;
+&lt;true/&gt;
+</code></pre>
+<table>
+<tr><td colspan="1" rowspan="1"><p>Key</p>
+</td><td colspan="1" rowspan="1"><p>Why</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>network.client</code></p>
+</td><td colspan="1" rowspan="1"><p>Outbound connections, for the one-time model download</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>cs.disable-library-validation</code></p>
+</td><td colspan="1" rowspan="1"><p>Lets the app load the LiteRT-LM GPU libraries that flutter_gemma copies into the bundle</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>files.user-selected.read-only</code></p>
+</td><td colspan="1" rowspan="1"><p>Lets <code>image_picker</code> open a photo you choose</p>
+</td></tr>
+</table>
+<h2 is-upgraded>Copy the GPU libraries into the app</h2>
+<p>On macOS, LiteRT-LM depends on companion libraries (<code>libGemmaModelConstraintProvider.dylib</code> and <code>libLiteRtMetalAccelerator.dylib</code>) that Native Assets can&#39;t bundle. <code>flutter_gemma_litertlm</code> installs a script that copies them into your <code>.app</code> and fixes the engine&#39;s reference to them. Your Xcode project needs to run that script after each build.</p>
+<aside class="warning"><p> Without this step the app builds, but LiteRT-LM references <code>@rpath/libGemmaModelConstraintProvider.dylib</code> and that file isn&#39;t in the bundle, so the engine fails to load.</p>
+</aside>
+<p><strong>If your project has a Podfile</strong> (<code>macos/Podfile</code>), follow the <code>post_install</code> block in the <a href="https://pub.dev/packages/flutter_gemma" target="_blank">flutter_gemma README</a>.</p>
+<p><strong>If it doesn&#39;t</strong> (the default for new projects, which use Swift Package Manager), add a Run Script phase in Xcode:</p>
+<ol type="1">
+<li>Open <code>macos/Runner.xcworkspace</code> in Xcode.</li>
+<li>Select the <strong>Runner</strong> project, then the <strong>Runner</strong> target, then <strong>Build Phases</strong>.</li>
+<li>Click <strong>+</strong> and choose <strong>New Run Script Phase</strong>. Make sure it&#39;s the <strong>last</strong> phase, after <em>Bundle Framework</em>.</li>
+<li>Rename it to <code>Stage flutter_gemma libraries</code>.</li>
+<li>Paste this script:</li>
+</ol>
+<pre><code language="language-bash" class="language-bash">set -e
+STAGER=&#34;${HOME}/Library/Caches/flutter_gemma/native/macos_arm64/stage_macos_companions.sh&#34;
+sh &#34;${STAGER}&#34; &#34;${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Frameworks&#34;
+touch &#34;${SCRIPT_OUTPUT_FILE_0}&#34;
+</code></pre>
+<ol type="1" start="6">
+<li>Under <strong>Input Files</strong>, add:</li>
+</ol>
+<pre><code language="language-text" class="language-text">$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Frameworks/LiteRtLm.framework/Versions/A/LiteRtLm
+</code></pre>
+<ol type="1" start="7">
+<li>Under <strong>Output Files</strong>, add:</li>
+</ol>
+<pre><code language="language-text" class="language-text">$(DERIVED_FILE_DIR)/flutter_gemma_litertlm_macos.stamp
+</code></pre>
+<p>The input file makes Xcode rerun the script whenever Flutter copies a fresh, unpatched engine library into the app. The output file lets Xcode schedule the phase correctly.</p>
+<p>Build once to confirm it works:</p>
+<pre><code language="language-bash" class="language-bash">flutter build macos --debug
+ls build/macos/Build/Products/Debug/gemma_codelab.app/Contents/Frameworks
+</code></pre>
+<p>You should see <code>GemmaModelConstraintProvider.framework</code> and <code>LiteRtMetalAccelerator.framework</code> next to <code>LiteRtLm.framework</code>.</p>
+<aside class="special"><p> The script lives in <code>~/Library/Caches/flutter_gemma</code> and is written there by the package&#39;s build hook when you build. If Xcode reports that it&#39;s missing, run <code>flutter clean && flutter pub get</code> and build again.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Initialize flutter_gemma" duration="3">
+        <p>flutter_gemma&#39;s core doesn&#39;t know how to run a model until you register an engine. You do that once, before <code>runApp</code>.</p>
+<p>Replace <code>lib/main.dart</code>:</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter/material.dart&#39;;
+import &#39;package:flutter_gemma/flutter_gemma.dart&#39;;
+import &#39;package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart&#39;;
+
+import &#39;download_screen.dart&#39;;
+
+Future&lt;void&gt; main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // flutter_gemma&#39;s core ships without an inference engine. Register the
+  // engine package you added: LiteRtLmEngine runs .litertlm models.
+  await FlutterGemma.initialize(inferenceEngines: const [LiteRtLmEngine()]);
+
+  runApp(const GemmaApp());
+}
+
+class GemmaApp extends StatelessWidget {
+  const GemmaApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: &#39;On-Device Gemma&#39;,
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorSchemeSeed: const Color(0xFF1A73E8),
+        brightness: Brightness.dark,
+      ),
+      home: const DownloadScreen(),
+    );
+  }
+}
+</code></pre>
+<p><code>FlutterGemma.initialize</code> sets up model storage and the download service, and <code>inferenceEngines</code> registers the engines you added. <code>LiteRtLmEngine</code> handles every <code>.litertlm</code> model.</p>
+<aside class="warning"><p> If you forget <code>inferenceEngines</code>, installing works but loading the model fails, because no registered engine can open the file.</p>
+</aside>
+<p>The app doesn&#39;t compile yet because <code>DownloadScreen</code> doesn&#39;t exist. You create it in the next step.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Download Gemma 4 E2B" duration="8">
+        <p>The model file is about 2.6 GB. Downloading it inside a build would make the app huge, so the app downloads it on first launch and keeps it on the device.</p>
+<h2 is-upgraded>Create a model service</h2>
+<p>Create <code>lib/gemma_service.dart</code>. It keeps the model URL, the install call and the loaded model in one place:</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter_gemma/flutter_gemma.dart&#39;;
+
+/// One place for everything model-related, so screens don&#39;t repeat it.
+class GemmaService {
+  GemmaService._();
+
+  static const modelUrl =
+      &#39;https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm&#39;;
+  static const modelFile = &#39;gemma-4-E2B-it.litertlm&#39;;
+
+  /// Keeps replies short, in one language, and free of LaTeX.
+  static const chatInstruction =
+      &#39;You are a concise assistant running on a phone. Always write in &#39;
+      &#39;English, including any reasoning. Write math in plain text, not LaTeX.&#39;;
+
+  static InferenceModel? _model;
+
+  /// Whether the model file is already on this device.
+  static Future&lt;bool&gt; isInstalled() =&gt; FlutterGemma.isModelInstalled(modelFile);
+
+  /// Downloads the model once and marks it as the active model.
+  static Future&lt;void&gt; install({
+    required void Function(int percent) onProgress,
+  }) {
+    return FlutterGemma.installModel(
+          modelType: ModelType.gemma4,
+          fileType: ModelFileType.litertlm,
+        )
+        // foreground: keeps an Android download alive past the 9-minute
+        // background limit. Ignored on other platforms.
+        .fromNetwork(modelUrl, foreground: true)
+        .withProgress(onProgress)
+        .install();
+  }
+
+  /// Loads the weights onto the GPU. This is slow, so it only happens once.
+  static Future&lt;InferenceModel&gt; loadModel() async {
+    return _model ??= await FlutterGemma.getActiveModel(
+      maxTokens: 4096,
+      preferredBackend: PreferredBackend.gpu,
+      supportImage: true,
+      maxNumImages: 1,
+    );
+  }
+}
+</code></pre>
+<p>Three details in this file matter:</p>
+<ul>
+<li><strong><code>fileType: ModelFileType.litertlm</code></strong><strong>.</strong> flutter_gemma doesn&#39;t infer the format from the file extension. Without it the install is recorded as a MediaPipe <code>.task</code> model, and the LiteRT-LM engine never picks it up.</li>
+<li><strong><code>modelType: ModelType.gemma4</code></strong> selects Gemma 4&#39;s prompt format, including its native tool-call tokens.</li>
+<li><strong><code>maxTokens: 4096</code></strong> is the <em>context window</em>: the prompt, the history and the reply together. Larger windows use more memory. <code>getActiveModel</code> is slow the first time, so <code>loadModel</code> keeps the instance in <code>_model</code> and reuses it.</li>
+</ul>
+<h2 is-upgraded>Create the download screen</h2>
+<p>Create <code>lib/download_screen.dart</code>. It checks whether the model is already installed. If it isn&#39;t, it shows a download button and a progress bar.</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter/material.dart&#39;;
+
+import &#39;gemma_service.dart&#39;;
+import &#39;home_screen.dart&#39;;
+
+class DownloadScreen extends StatefulWidget {
+  const DownloadScreen({super.key});
+
+  @override
+  State&lt;DownloadScreen&gt; createState() =&gt; _DownloadScreenState();
+}
+
+class _DownloadScreenState extends State&lt;DownloadScreen&gt; {
+  bool _checking = true;
+  bool _downloading = false;
+  int _progress = 0;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkInstalled();
+  }
+
+  Future&lt;void&gt; _checkInstalled() async {
+    if (await GemmaService.isInstalled()) {
+      _openHome();
+    } else if (mounted) {
+      setState(() =&gt; _checking = false);
+    }
+  }
+
+  Future&lt;void&gt; _download() async {
+    setState(() {
+      _downloading = true;
+      _error = null;
+    });
+    try {
+      await GemmaService.install(
+        onProgress: (percent) {
+          if (mounted) setState(() =&gt; _progress = percent);
+        },
+      );
+      _openHome();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _error = &#39;$e&#39;;
+        });
+      }
+    }
+  }
+
+  void _openHome() {
+    if (!mounted) return;
+    Navigator.of(context)
+        .pushReplacement(MaterialPageRoute(builder: (_) =&gt; const HomeScreen()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: _checking
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Spacer(),
+                    Text(&#39;Gemma 4 E2B&#39;, style: text.displaySmall),
+                    const SizedBox(height: 8),
+                    Text(
+                      &#39;About 2.6 GB. Downloaded once, then it runs offline.&#39;,
+                      style: text.bodyLarge,
+                    ),
+                    const Spacer(),
+                    if (_downloading) ...[
+                      LinearProgressIndicator(value: _progress / 100),
+                      const SizedBox(height: 12),
+                      Text(&#39;$_progress%&#39;),
+                    ] else
+                      FilledButton.icon(
+                        onPressed: _download,
+                        icon: const Icon(Icons.download),
+                        label: const Text(&#39;Download model&#39;),
+                      ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+</code></pre>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Stream a chat response" duration="10">
+        <p>Now build the home screen and the first feature: a chat whose reply appears token by token.</p>
+<h2 is-upgraded>Create the home screen</h2>
+<p>Create <code>lib/home_screen.dart</code>:</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter/material.dart&#39;;
+
+import &#39;chat_screen.dart&#39;;
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text(&#39;On-Device Gemma&#39;)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          DemoTile(
+            icon: Icons.chat_bubble_outline,
+            title: &#39;Chat&#39;,
+            subtitle: &#39;Streaming replies, generated on this device&#39;,
+            screen: ChatScreen(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DemoTile extends StatelessWidget {
+  const DemoTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.screen,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget screen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () =&gt;
+            Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) =&gt; screen)),
+      ),
+    );
+  }
+}
+</code></pre>
+<h2 is-upgraded>Create the chat screen</h2>
+<p>Create <code>lib/chat_screen.dart</code>:</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter/material.dart&#39;;
+import &#39;package:flutter_gemma/flutter_gemma.dart&#39;;
+
+import &#39;gemma_service.dart&#39;;
+
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
+
+  @override
+  State&lt;ChatScreen&gt; createState() =&gt; _ChatScreenState();
+}
+
+class _ChatScreenState extends State&lt;ChatScreen&gt; {
+  final _input = TextEditingController();
+  final _messages = &lt;ChatMessage&gt;[];
+
+  InferenceChat? _chat;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _openChat();
+  }
+
+  Future&lt;void&gt; _openChat() async {
+    try {
+      final model = await GemmaService.loadModel();
+      final chat = await model.createChat(
+        // Without this the chat assumes an older Gemma prompt format.
+        modelType: ModelType.gemma4,
+        supportImage: true,
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.9,
+        systemInstruction: GemmaService.chatInstruction,
+      );
+      if (mounted) setState(() =&gt; _chat = chat);
+    } catch (e) {
+      if (mounted) setState(() =&gt; _error = &#39;$e&#39;);
+    }
+  }
+
+  Future&lt;void&gt; _send() async {
+    final chat = _chat;
+    final text = _input.text.trim();
+    if (chat == null || _busy || text.isEmpty) return;
+
+    _input.clear();
+    final reply = ChatMessage(fromUser: false);
+    setState(() {
+      _busy = true;
+      _messages
+        ..add(ChatMessage(fromUser: true, text: text))
+        ..add(reply);
+    });
+
+    try {
+      await chat.addQueryChunk(Message.text(text: text, isUser: true));
+      await for (final response in chat.generateChatResponseAsync()) {
+        if (!mounted) return;
+        if (response is TextResponse) {
+          setState(() =&gt; reply.text += response.token);
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() =&gt; reply.text = &#39;Error: $e&#39;);
+    } finally {
+      if (mounted) setState(() =&gt; _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _chat?.close();
+    _input.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text(&#39;Chat&#39;)),
+      body: Column(
+        children: [
+          Expanded(child: _buildMessages()),
+          _buildComposer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessages() {
+    if (_error != null) {
+      return Center(
+        child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)),
+      );
+    }
+    if (_chat == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _messages.length,
+      itemBuilder: (_, i) =&gt; MessageBubble(message: _messages[i]),
+    );
+  }
+
+  Widget _buildComposer() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _input,
+                onSubmitted: (_) =&gt; _send(),
+                decoration: const InputDecoration(
+                  hintText: &#39;Ask anything...&#39;,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: _busy ? null : _send,
+              icon: const Icon(Icons.arrow_upward),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ChatMessage {
+  ChatMessage({required this.fromUser, this.text = &#39;&#39;});
+
+  final bool fromUser;
+  String text;
+}
+
+class MessageBubble extends StatelessWidget {
+  const MessageBubble({super.key, required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Align(
+      alignment: message.fromUser
+          ? Alignment.centerRight
+          : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Material(
+          color: message.fromUser
+              ? colors.primaryContainer
+              : colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text(message.text.isEmpty ? &#39;...&#39; : message.text),
+          ),
+        ),
+      ),
+    );
+  }
+}
+</code></pre>
+<p>How a message flows:</p>
+<ol type="1">
+<li><code>createChat</code> opens a conversation on the loaded model. <code>systemInstruction</code> sets its behavior for the whole chat.</li>
+<li><code>addQueryChunk</code> adds the user&#39;s message to the conversation.</li>
+<li><code>generateChatResponseAsync</code> returns a stream. Each <code>TextResponse</code> carries the next piece of the reply, and appending it inside <code>setState</code> makes the text appear as it&#39;s generated.</li>
+</ol>
+<p><strong>Why these sampling values?</strong> With wide sampling, small models sometimes switch language mid-sentence and drop in a word from another script. <code>temperature: 0.7, topK: 40, topP: 0.9</code>, together with an instruction that names the language, keeps replies readable without making them repetitive.</p>
+<aside class="special"><p><strong><code>createChat</code></strong><strong> or </strong><strong><code>openChat</code></strong><strong>? </strong><code>createChat</code> opens the <em>primary</em> conversation. The engine keeps one live conversation at a time, so creating a new one closes the previous one. <code>openChat</code> opens additional concurrent sessions, but on <code>.litertlm</code> models those sessions reject images. This app shows one screen at a time and needs images, so it uses <code>createChat</code> everywhere.</p>
+</aside>
+<h2 is-upgraded>Run it</h2>
+<pre><code language="language-bash" class="language-bash">flutter run
+</code></pre>
+<p>Tap <strong>Download model</strong> and wait for it to reach 100%. Then open <strong>Chat</strong> and ask something like <em>&#34;In one sentence, why run a model on-device?&#34;</em></p>
+<p>Opening the first chat after launch takes a few seconds while the model loads onto the GPU, and a spinner shows until it&#39;s ready. Other screens reuse the loaded model.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Add vision" duration="8">
+        <p>Gemma 4 E2B understands images. Sending one is a different <code>Message</code> constructor. The model was already loaded with <code>supportImage: true</code> in <code>GemmaService</code>, and the chat was opened with <code>supportImage: true</code>.</p>
+<p>Replace <code>lib/chat_screen.dart</code> with the version below. What changed:</p>
+<ul>
+<li>A photo button that calls <code>_pickImage</code>. Phones open the camera. Desktop has no camera source, so it opens a file picker.</li>
+<li>The picked image is scaled to at most 1024 px wide with <code>maxWidth</code>, so the app never holds a full-resolution photo in memory.</li>
+<li><code>_send</code> uses <code>Message.withImage</code> when a photo is attached and falls back to a default question if the text field is empty.</li>
+<li><code>ChatMessage</code> and <code>MessageBubble</code> show the photo in the conversation.</li>
+</ul>
+<pre><code language="language-dart" class="language-dart">import &#39;dart:io&#39;;
+
+import &#39;package:flutter/foundation.dart&#39;;
+import &#39;package:flutter/material.dart&#39;;
+import &#39;package:flutter_gemma/flutter_gemma.dart&#39;;
+import &#39;package:image_picker/image_picker.dart&#39;;
+
+import &#39;gemma_service.dart&#39;;
+
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
+
+  @override
+  State&lt;ChatScreen&gt; createState() =&gt; _ChatScreenState();
+}
+
+class _ChatScreenState extends State&lt;ChatScreen&gt; {
+  final _input = TextEditingController();
+  final _messages = &lt;ChatMessage&gt;[];
+  final _picker = ImagePicker();
+
+  Uint8List? _image;
+
+  InferenceChat? _chat;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _openChat();
+  }
+
+  Future&lt;void&gt; _openChat() async {
+    try {
+      final model = await GemmaService.loadModel();
+      final chat = await model.createChat(
+        // Without this the chat assumes an older Gemma prompt format.
+        modelType: ModelType.gemma4,
+        supportImage: true,
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.9,
+        systemInstruction: GemmaService.chatInstruction,
+      );
+      if (mounted) setState(() =&gt; _chat = chat);
+    } catch (e) {
+      if (mounted) setState(() =&gt; _error = &#39;$e&#39;);
+    }
+  }
+
+  Future&lt;void&gt; _pickImage() async {
+    // Desktop has no camera source, so fall back to the file picker.
+    final isDesktop =
+        !kIsWeb &amp;&amp; (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+    final file = await _picker.pickImage(
+      source: isDesktop ? ImageSource.gallery : ImageSource.camera,
+      maxWidth: 1024,
+    );
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    setState(() =&gt; _image = bytes);
+  }
+
+  Future&lt;void&gt; _send() async {
+    final chat = _chat;
+    final image = _image;
+    var text = _input.text.trim();
+    if (chat == null || _busy || (text.isEmpty &amp;&amp; image == null)) return;
+    if (text.isEmpty) text = &#39;What do you see in this image?&#39;;
+
+    _input.clear();
+    final reply = ChatMessage(fromUser: false);
+    setState(() {
+      _busy = true;
+      _image = null;
+      _messages
+        ..add(ChatMessage(fromUser: true, text: text, image: image))
+        ..add(reply);
+    });
+
+    try {
+      await chat.addQueryChunk(
+        image == null
+            ? Message.text(text: text, isUser: true)
+            : Message.withImage(text: text, imageBytes: image, isUser: true),
+      );
+      await for (final response in chat.generateChatResponseAsync()) {
+        if (!mounted) return;
+        if (response is TextResponse) {
+          setState(() =&gt; reply.text += response.token);
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() =&gt; reply.text = &#39;Error: $e&#39;);
+    } finally {
+      if (mounted) setState(() =&gt; _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _chat?.close();
+    _input.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text(&#39;Chat&#39;)),
+      body: Column(
+        children: [
+          Expanded(child: _buildMessages()),
+          _buildComposer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessages() {
+    if (_error != null) {
+      return Center(
+        child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)),
+      );
+    }
+    if (_chat == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _messages.length,
+      itemBuilder: (_, i) =&gt; MessageBubble(message: _messages[i]),
+    );
+  }
+
+  Widget _buildComposer() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            if (_image != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    _image!,
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            IconButton(
+              onPressed: _busy ? null : _pickImage,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+            ),
+            Expanded(
+              child: TextField(
+                controller: _input,
+                onSubmitted: (_) =&gt; _send(),
+                decoration: const InputDecoration(
+                  hintText: &#39;Ask anything...&#39;,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: _busy ? null : _send,
+              icon: const Icon(Icons.arrow_upward),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ChatMessage {
+  ChatMessage({required this.fromUser, this.text = &#39;&#39;, this.image});
+
+  final bool fromUser;
+  final Uint8List? image;
+  String text;
+}
+
+class MessageBubble extends StatelessWidget {
+  const MessageBubble({super.key, required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Align(
+      alignment: message.fromUser
+          ? Alignment.centerRight
+          : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Material(
+          color: message.fromUser
+              ? colors.primaryContainer
+              : colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (message.image != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(message.image!, height: 180),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Text(message.text.isEmpty ? &#39;...&#39; : message.text),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+</code></pre>
+<p>Rename the home tile to reflect the new feature. In <code>lib/home_screen.dart</code>, update the tile:</p>
+<pre><code language="language-dart" class="language-dart">DemoTile(
+  icon: Icons.chat_bubble_outline,
+  title: &#39;Chat &amp; vision&#39;,
+  subtitle: &#39;Ask about text or a photo&#39;,
+  screen: ChatScreen(),
+),
+</code></pre>
+<p>Run the app again, open <strong>Chat &amp; vision</strong>, attach a photo and ask <em>&#34;What do you see?&#34;</em></p>
+<aside class="warning"><p> Images only work on sessions opened with <code>createChat</code>. A session from <code>openChat</code> on a <code>.litertlm</code> model rejects image input with an error.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Show the model&#39;s reasoning" duration="6">
+        <p>Gemma 4 can think before it answers. With <code>isThinking: true</code>, the stream also emits <code>ThinkingResponse</code> events that carry the reasoning, followed by the normal <code>TextResponse</code> answer.</p>
+<p>Replace <code>lib/chat_screen.dart</code> again. What changed:</p>
+<ul>
+<li><code>ChatScreen</code> takes a <code>thinking</code> flag and passes it to <code>createChat</code> as <code>isThinking</code>.</li>
+<li>The <code>if</code> on <code>TextResponse</code> becomes an exhaustive <code>switch</code> over the sealed <code>ModelResponse</code>. Reasoning goes into <code>ChatMessage.thinking</code>, and the answer into <code>text</code>.</li>
+<li>The bubble shows reasoning in an expandable <strong>Reasoning</strong> section. It starts open while the model is still thinking.</li>
+</ul>
+<pre><code language="language-dart" class="language-dart">import &#39;dart:io&#39;;
+
+import &#39;package:flutter/foundation.dart&#39;;
+import &#39;package:flutter/material.dart&#39;;
+import &#39;package:flutter_gemma/flutter_gemma.dart&#39;;
+import &#39;package:image_picker/image_picker.dart&#39;;
+
+import &#39;gemma_service.dart&#39;;
+
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key, this.thinking = false});
+
+  /// Streams the model&#39;s reasoning before its answer.
+  final bool thinking;
+
+  @override
+  State&lt;ChatScreen&gt; createState() =&gt; _ChatScreenState();
+}
+
+class _ChatScreenState extends State&lt;ChatScreen&gt; {
+  final _input = TextEditingController();
+  final _messages = &lt;ChatMessage&gt;[];
+  final _picker = ImagePicker();
+
+  Uint8List? _image;
+
+  InferenceChat? _chat;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _openChat();
+  }
+
+  Future&lt;void&gt; _openChat() async {
+    try {
+      final model = await GemmaService.loadModel();
+      final chat = await model.createChat(
+        // Without this the chat assumes an older Gemma prompt format.
+        modelType: ModelType.gemma4,
+        supportImage: true,
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.9,
+        systemInstruction: GemmaService.chatInstruction,
+        isThinking: widget.thinking,
+      );
+      if (mounted) setState(() =&gt; _chat = chat);
+    } catch (e) {
+      if (mounted) setState(() =&gt; _error = &#39;$e&#39;);
+    }
+  }
+
+  Future&lt;void&gt; _pickImage() async {
+    // Desktop has no camera source, so fall back to the file picker.
+    final isDesktop =
+        !kIsWeb &amp;&amp; (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+    final file = await _picker.pickImage(
+      source: isDesktop ? ImageSource.gallery : ImageSource.camera,
+      maxWidth: 1024,
+    );
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    setState(() =&gt; _image = bytes);
+  }
+
+  Future&lt;void&gt; _send() async {
+    final chat = _chat;
+    final image = _image;
+    var text = _input.text.trim();
+    if (chat == null || _busy || (text.isEmpty &amp;&amp; image == null)) return;
+    if (text.isEmpty) text = &#39;What do you see in this image?&#39;;
+
+    _input.clear();
+    final reply = ChatMessage(fromUser: false);
+    setState(() {
+      _busy = true;
+      _image = null;
+      _messages
+        ..add(ChatMessage(fromUser: true, text: text, image: image))
+        ..add(reply);
+    });
+
+    try {
+      await chat.addQueryChunk(
+        image == null
+            ? Message.text(text: text, isUser: true)
+            : Message.withImage(text: text, imageBytes: image, isUser: true),
+      );
+      await for (final response in chat.generateChatResponseAsync()) {
+        if (!mounted) return;
+        switch (response) {
+          case TextResponse(:final token):
+            setState(() =&gt; reply.text += token);
+          case ThinkingResponse(:final content):
+            setState(() =&gt; reply.thinking += content);
+          case FunctionCallResponse():
+          case ParallelFunctionCallResponse():
+            break; // This chat has no tools.
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() =&gt; reply.text = &#39;Error: $e&#39;);
+    } finally {
+      if (mounted) setState(() =&gt; _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _chat?.close();
+    _input.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.thinking ? &#39;Thinking&#39; : &#39;Chat&#39;)),
+      body: Column(
+        children: [
+          Expanded(child: _buildMessages()),
+          _buildComposer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessages() {
+    if (_error != null) {
+      return Center(
+        child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)),
+      );
+    }
+    if (_chat == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _messages.length,
+      itemBuilder: (_, i) =&gt; MessageBubble(message: _messages[i]),
+    );
+  }
+
+  Widget _buildComposer() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            if (_image != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    _image!,
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            IconButton(
+              onPressed: _busy ? null : _pickImage,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+            ),
+            Expanded(
+              child: TextField(
+                controller: _input,
+                onSubmitted: (_) =&gt; _send(),
+                decoration: const InputDecoration(
+                  hintText: &#39;Ask anything...&#39;,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: _busy ? null : _send,
+              icon: const Icon(Icons.arrow_upward),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ChatMessage {
+  ChatMessage({required this.fromUser, this.text = &#39;&#39;, this.image});
+
+  final bool fromUser;
+  final Uint8List? image;
+  String text;
+  String thinking = &#39;&#39;;
+}
+
+class MessageBubble extends StatelessWidget {
+  const MessageBubble({super.key, required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Align(
+      alignment: message.fromUser
+          ? Alignment.centerRight
+          : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Material(
+          color: message.fromUser
+              ? colors.primaryContainer
+              : colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (message.image != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(message.image!, height: 180),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (message.thinking.isNotEmpty)
+                  ExpansionTile(
+                    title: const Text(&#39;Reasoning&#39;),
+                    tilePadding: EdgeInsets.zero,
+                    initiallyExpanded: message.text.isEmpty,
+                    children: [
+                      Text(
+                        message.thinking,
+                        style: TextStyle(
+                          color: colors.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                Text(message.text.isEmpty ? &#39;...&#39; : message.text),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+</code></pre>
+<p>Add a second tile to <code>lib/home_screen.dart</code>. The whole list now reads:</p>
+<pre><code language="language-dart" class="language-dart">children: const [
+  DemoTile(
+    icon: Icons.chat_bubble_outline,
+    title: &#39;Chat &amp; vision&#39;,
+    subtitle: &#39;Ask about text or a photo&#39;,
+    screen: ChatScreen(),
+  ),
+  DemoTile(
+    icon: Icons.psychology_outlined,
+    title: &#39;Thinking&#39;,
+    subtitle: &#39;Watch the reasoning stream before the answer&#39;,
+    screen: ChatScreen(thinking: true),
+  ),
+],
+</code></pre>
+<p>Open <strong>Thinking</strong> and try a question that punishes a quick answer:</p>
+<p><em>&#34;A bat and a ball cost 1.10 in total. The bat costs 1.00 more than the ball. How much is the ball?&#34;</em></p>
+<p>The reasoning streams first. Then the answer (0.05) appears below it.</p>
+<aside class="special"><p> Thinking is set per chat, not per model. The Chat and Thinking screens share the same loaded weights, and only the conversation differs.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Let the model call your code" duration="12">
+        <p>Function calling lets the model trigger actions in your app. You describe each tool with a name, a description and a JSON Schema for its arguments. When the model decides to use one, flutter_gemma parses the call, you run it, and the result goes back to the model so it can continue.</p>
+<p><code>generateChatResponseWithTools</code> runs that loop for you. You supply one callback, <code>onToolCall</code>.</p>
+<p>Create <code>lib/tools_screen.dart</code>:</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter/material.dart&#39;;
+import &#39;package:flutter_gemma/flutter_gemma.dart&#39;;
+
+import &#39;gemma_service.dart&#39;;
+
+/// What the model can ask the app to do. Each tool is a name, a description
+/// the model reads, and a JSON Schema for its arguments.
+const _tools = [
+  Tool(
+    name: &#39;add_task&#39;,
+    description: &#39;Add a task to the to-do list.&#39;,
+    parameters: {
+      &#39;type&#39;: &#39;object&#39;,
+      &#39;properties&#39;: {
+        &#39;title&#39;: {&#39;type&#39;: &#39;string&#39;, &#39;description&#39;: &#39;What needs doing.&#39;},
+      },
+      &#39;required&#39;: [&#39;title&#39;],
+    },
+  ),
+  Tool(
+    name: &#39;list_tasks&#39;,
+    description: &#39;Return every task on the to-do list.&#39;,
+    // No arguments, but still a schema. Leaving parameters out makes
+    // generation fail with &#34;Failed to start streaming (code: 13)&#34;.
+    parameters: {&#39;type&#39;: &#39;object&#39;, &#39;properties&#39;: &lt;String, dynamic&gt;{}},
+  ),
+  Tool(
+    name: &#39;set_color&#39;,
+    description: &#39;Change the color of the app bar.&#39;,
+    parameters: {
+      &#39;type&#39;: &#39;object&#39;,
+      &#39;properties&#39;: {
+        &#39;color&#39;: {
+          &#39;type&#39;: &#39;string&#39;,
+          &#39;enum&#39;: [&#39;blue&#39;, &#39;red&#39;, &#39;yellow&#39;, &#39;green&#39;],
+        },
+      },
+      &#39;required&#39;: [&#39;color&#39;],
+    },
+  ),
+];
+
+const _colors = {
+  &#39;blue&#39;: Color(0xFF1A73E8),
+  &#39;red&#39;: Color(0xFFD93025),
+  &#39;yellow&#39;: Color(0xFFF9AB00),
+  &#39;green&#39;: Color(0xFF1E8E3E),
+};
+
+class ToolsScreen extends StatefulWidget {
+  const ToolsScreen({super.key});
+
+  @override
+  State&lt;ToolsScreen&gt; createState() =&gt; _ToolsScreenState();
+}
+
+class _ToolsScreenState extends State&lt;ToolsScreen&gt; {
+  final _input = TextEditingController();
+  final _log = &lt;String&gt;[];
+  final _tasks = &lt;String&gt;[];
+
+  InferenceChat? _chat;
+  Color? _barColor;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _openChat();
+  }
+
+  Future&lt;void&gt; _openChat() async {
+    try {
+      final model = await GemmaService.loadModel();
+      final chat = await model.createChat(
+        modelType: ModelType.gemma4,
+        tools: _tools,
+        supportsFunctionCalls: true,
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.9,
+        systemInstruction:
+            &#39;You control a to-do app through tools. Always call a tool &#39;
+            &#39;instead of describing what you would do. After a tool returns, &#39;
+            &#39;confirm the result in one short English sentence.&#39;,
+      );
+      if (mounted) setState(() =&gt; _chat = chat);
+    } catch (e) {
+      if (mounted) setState(() =&gt; _error = &#39;$e&#39;);
+    }
+  }
+
+  /// Runs one tool call. Returns an error map instead of throwing, so the
+  /// model sees what went wrong and can recover.
+  Map&lt;String, dynamic&gt; _runTool(FunctionCallResponse call) {
+    switch (call.name) {
+      case &#39;add_task&#39;:
+        final title = (call.args[&#39;title&#39;] as String? ?? &#39;&#39;).trim();
+        if (title.isEmpty) return {&#39;error&#39;: &#39;title is empty&#39;};
+        setState(() =&gt; _tasks.add(title));
+        return {&#39;added&#39;: title, &#39;count&#39;: _tasks.length};
+      case &#39;list_tasks&#39;:
+        return {&#39;tasks&#39;: _tasks};
+      case &#39;set_color&#39;:
+        final color = _colors[call.args[&#39;color&#39;]];
+        if (color == null) {
+          return {&#39;error&#39;: &#39;unknown color ${call.args[&#39;color&#39;]}&#39;};
+        }
+        setState(() =&gt; _barColor = color);
+        return {&#39;color&#39;: call.args[&#39;color&#39;]};
+      default:
+        return {&#39;error&#39;: &#39;no tool named ${call.name}&#39;};
+    }
+  }
+
+  Future&lt;void&gt; _send() async {
+    final chat = _chat;
+    final text = _input.text.trim();
+    if (chat == null || _busy || text.isEmpty) return;
+
+    _input.clear();
+    setState(() {
+      _busy = true;
+      _log
+        ..add(&#39;You: $text&#39;)
+        ..add(&#39;&#39;);
+    });
+
+    try {
+      await chat.addQueryChunk(Message.text(text: text, isUser: true));
+      await for (final response in chat.generateChatResponseWithTools(
+        onToolCall: (call) {
+          setState(
+            () =&gt; _log.insert(_log.length - 1, &#39;→ ${call.name}(${call.args})&#39;),
+          );
+          return _runTool(call);
+        },
+        maxToolTurns: 5,
+        isCancelled: () =&gt; !mounted,
+      )) {
+        if (!mounted) return;
+        if (response is TextResponse) {
+          setState(() =&gt; _log.last += response.token);
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() =&gt; _log.last = &#39;Error: $e&#39;);
+    } finally {
+      if (mounted) setState(() =&gt; _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _chat?.close();
+    _input.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text(&#39;Tools&#39;), backgroundColor: _barColor),
+      body: Column(
+        children: [
+          if (_tasks.isNotEmpty)
+            Card(
+              margin: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  for (final task in _tasks)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.check_box_outline_blank),
+                      title: Text(task),
+                    ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: _error != null
+                ? Center(child: Text(_error!))
+                : _chat == null
+                ? const Center(child: CircularProgressIndicator())
+                : ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      for (final line in _log)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Text(
+                            line.isEmpty ? &#39;...&#39; : line,
+                            style: line.startsWith(&#39;→&#39;)
+                                ? const TextStyle(
+                                    fontFamily: &#39;monospace&#39;,
+                                    fontSize: 13,
+                                  )
+                                : null,
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _input,
+                      onSubmitted: (_) =&gt; _send(),
+                      decoration: const InputDecoration(
+                        hintText: &#39;Add &#34;buy milk&#34; and make it green&#39;,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _busy ? null : _send,
+                    icon: const Icon(Icons.arrow_upward),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+</code></pre>
+<p>Things to notice:</p>
+<ul>
+<li><strong><code>tools</code></strong><strong> + </strong><strong><code>supportsFunctionCalls: true</code></strong> on <code>createChat</code> declare the tools. With <code>ModelType.gemma4</code>, flutter_gemma passes them to the model&#39;s native chat template instead of pasting them into the prompt text.</li>
+<li><strong><code>onToolCall</code></strong> gets a <code>FunctionCallResponse</code> with <code>name</code> and <code>args</code>, and returns a <code>Map</code>. flutter_gemma sends that map back to the model and asks it to continue, until the model replies without calling a tool.</li>
+<li><strong><code>_runTool</code></strong><strong> never throws.</strong> If <code>onToolCall</code> throws, flutter_gemma records the error in the conversation and then rethrows it, which ends the stream. Returning <code>{'error': ...}</code> instead lets the model read what went wrong and respond to it.</li>
+<li><strong><code>maxToolTurns: 5</code></strong> stops a model that keeps calling tools without ever answering.</li>
+</ul>
+<aside class="warning"><p><strong>Give every tool a </strong><strong><code>parameters</code></strong><strong> schema, even with no arguments. </strong><code>list_tasks</code> takes no arguments but still declares <code>{'type': 'object', 'properties': {}}</code>. With flutter_gemma 1.8.1, a tool that leaves <code>parameters</code> out makes generation fail with <code>Failed to start streaming (code: 13)</code>.</p>
+</aside>
+<p>Finally, add the third tile. Replace <code>lib/home_screen.dart</code>:</p>
+<pre><code language="language-dart" class="language-dart">import &#39;package:flutter/material.dart&#39;;
+
+import &#39;chat_screen.dart&#39;;
+import &#39;tools_screen.dart&#39;;
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text(&#39;On-Device Gemma&#39;)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: const [
+          DemoTile(
+            icon: Icons.chat_bubble_outline,
+            title: &#39;Chat &amp; vision&#39;,
+            subtitle: &#39;Ask about text or a photo&#39;,
+            screen: ChatScreen(),
+          ),
+          DemoTile(
+            icon: Icons.psychology_outlined,
+            title: &#39;Thinking&#39;,
+            subtitle: &#39;Watch the reasoning stream before the answer&#39;,
+            screen: ChatScreen(thinking: true),
+          ),
+          DemoTile(
+            icon: Icons.build_outlined,
+            title: &#39;Tools&#39;,
+            subtitle: &#39;The model calls your Dart functions&#39;,
+            screen: ToolsScreen(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DemoTile extends StatelessWidget {
+  const DemoTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.screen,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget screen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () =&gt;
+            Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) =&gt; screen)),
+      ),
+    );
+  }
+}
+</code></pre>
+<p>Run the app, open <strong>Tools</strong> and try:</p>
+<ul>
+<li><em>&#34;Add a task to buy milk and make the app bar green.&#34;</em> The model calls <code>add_task</code> and then <code>set_color</code>.</li>
+<li><em>&#34;What is on my list?&#34;</em> The model calls <code>list_tasks</code> and reads the result back.</li>
+</ul>
+<p>Each tool call appears in the log as <code>→ name(args)</code>, so you can see exactly what the model asked for.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Test it offline" duration="3">
+        <p>This is the step that shows the difference from a cloud API.</p>
+<ol type="1">
+<li>Make sure the model has finished downloading and you&#39;ve sent at least one message.</li>
+<li>Turn on <strong>airplane mode</strong>, or turn off Wi-Fi on your Mac.</li>
+<li>Fully close the app and launch it again.</li>
+<li>Use each screen: Chat, Vision, Thinking and Tools.</li>
+</ol>
+<p>Everything still works. The download screen sees that the model is installed and goes straight to the home screen, and every response is generated on the device.</p>
+<aside class="special"><p> Also try a release build with <code>flutter run --release</code>. That&#39;s the build your users get.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Troubleshooting" duration="5">
+        <p>Problems you&#39;re likely to hit, and what fixes them.</p>
+<h2 is-upgraded>The model downloads but won&#39;t load</h2>
+<ul>
+<li>Check <code>fileType: ModelFileType.litertlm</code> on <code>installModel</code>. The extension isn&#39;t inferred.</li>
+<li>Check that <code>FlutterGemma.initialize</code> registers <code>LiteRtLmEngine()</code>.</li>
+<li>If you first installed with the wrong <code>fileType</code>, the app still treats the model as installed and skips the download screen. Uninstall the app, or clear its data, and install again.</li>
+</ul>
+<h2 is-upgraded>Tool calls show up as raw text</h2>
+<p>Make sure <code>createChat</code> gets <code>modelType: ModelType.gemma4</code>. Without it the chat uses an older Gemma prompt format. The tools become part of the prompt text, and the model&#39;s calls can come back as plain text instead of <code>FunctionCallResponse</code> events.</p>
+<h2 is-upgraded><code>Failed to start streaming (code: 13)</code> on a tools chat</h2>
+<p>A tool is missing its <code>parameters</code> schema. Give it at least an empty object schema:</p>
+<pre><code language="language-dart" class="language-dart">parameters: {&#39;type&#39;: &#39;object&#39;, &#39;properties&#39;: &lt;String, dynamic&gt;{}},
+</code></pre>
+<h2 is-upgraded>Answers contain <code>$x$</code> or other LaTeX</h2>
+<p>Gemma often formats math as LaTeX, even when asked not to. The system instruction reduces this but doesn&#39;t prevent it. To display it properly, render replies with a Markdown package that supports LaTeX, such as <a href="https://pub.dev/packages/gpt_markdown" target="_blank">gpt_markdown</a>.</p>
+<h2 is-upgraded>Words from another language appear in the reply</h2>
+<p>Narrow the sampling (<code>temperature</code>, <code>topK</code>, <code>topP</code>) and say in the system instruction which language to use, including for reasoning.</p>
+<h2 is-upgraded>Android: the download crashes on Android 14+</h2>
+<p>Add the <code>SystemForegroundService</code> override and <code>FOREGROUND_SERVICE_DATA_SYNC</code> from the Android setup step.</p>
+<h2 is-upgraded>Android: the app crashes when the engine starts</h2>
+<p>Check that you&#39;re on an arm64 device, not an x86_64 emulator, and that <code>abiFilters</code> is set.</p>
+<h2 is-upgraded>macOS: the engine fails to load</h2>
+<p>Open the built app&#39;s <code>Contents/Frameworks</code> folder. If <code>GemmaModelConstraintProvider.framework</code> is missing, the Run Script phase didn&#39;t run. Check that it&#39;s the last build phase and that its input file is set.</p>
+<h2 is-upgraded>The app is killed while loading the model</h2>
+<p>The device ran out of memory. Close other apps, try a device with more RAM, or lower <code>maxTokens</code>.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Congratulations" duration="2">
+        <p>You built a Flutter app that runs Gemma 4 on the device, with streaming chat, image understanding, visible reasoning and function calling. After the first download it needs no network, no API key and no server.</p>
+<h2 is-upgraded>Where to go next</h2>
+<ul>
+<li><strong>Add voice. </strong><a href="https://pub.dev/packages/flutter_gemma_speech" target="_blank">flutter_gemma_speech</a> adds on-device speech-to-text (for example Whisper) and text-to-speech (for example Matcha), so the whole speech-to-speech loop can run without a network.</li>
+<li><strong>Answer questions about your own documents. </strong><code>flutter_gemma_rag_sqlite</code> and <code>flutter_gemma_rag_qdrant</code> add on-device vector search for retrieval-augmented generation.</li>
+<li><strong>Give the model skills. </strong><code>flutter_gemma_agent</code> builds on function calling with reusable skills.</li>
+<li><strong>Explore the demo app. </strong><a href="https://github.com/jakansha2001/flutter-gemma-demo" target="_blank">flutter-gemma-demo</a> is a more complete version of this app, with a hands-free voice loop, a larger set of tools and Markdown/LaTeX rendering.</li>
+</ul>
+<h2 is-upgraded>Resources</h2>
+<ul>
+<li><a href="https://pub.dev/packages/flutter_gemma" target="_blank">flutter_gemma on pub.dev</a></li>
+<li><a href="https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm" target="_blank">Gemma 4 E2B LiteRT-LM model card</a></li>
+<li><a href="https://ai.google.dev/gemma" target="_blank">Gemma documentation</a></li>
+<li><a href="https://github.com/google-ai-edge/LiteRT-LM" target="_blank">LiteRT-LM on GitHub</a></li>
+</ul>
+<h2 is-upgraded>About the author</h2>
+<p>This codelab was written by <strong>Akansha Jain</strong>: <a href="https://akanshajain.dev" target="_blank">Website</a> · <a href="https://www.linkedin.com/in/akansha-jain-2001/" target="_blank">LinkedIn</a> · <a href="https://github.com/jakansha2001" target="_blank">GitHub</a> · <a href="https://medium.com/@akansha.jain1611" target="_blank">Medium</a></p>
+
+
+      </google-codelab-step>
+    
+  </google-codelab>
+
+  <script src="https://storage.googleapis.com/claat-public/native-shim.js"></script>
+  <script src="https://storage.googleapis.com/claat-public/custom-elements.min.js"></script>
+  <script src="https://storage.googleapis.com/claat-public/prettify.js"></script>
+  <script src="https://storage.googleapis.com/claat-public/codelab-elements.js"></script>
+  <script src="//support.google.com/inapp/api.js"></script>
+
+</body>
+</html>
