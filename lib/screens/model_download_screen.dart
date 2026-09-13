@@ -1,318 +1,247 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_gemma/core/api/flutter_gemma.dart';
-import 'package:flutter_gemma/core/model.dart';
-import 'package:gemma_vision_demo/screens/chat_screen.dart';
+import 'package:gemma_vision_demo/gemma/gemma_failure.dart';
+import 'package:gemma_vision_demo/gemma/gemma_service.dart';
+import 'package:gemma_vision_demo/gemma/model_catalog.dart';
+import 'package:gemma_vision_demo/theme.dart';
+import 'package:gemma_vision_demo/widgets/status_view.dart';
 
+/// Gate in front of every demo: ensure the weights exist, then hand off to
+/// [next]. Already installed? It forwards immediately, so the user only ever
+/// sees this screen once.
 class ModelDownloadScreen extends StatefulWidget {
-  const ModelDownloadScreen({super.key});
+  const ModelDownloadScreen({super.key, required this.next});
+
+  final Widget next;
 
   @override
   State<ModelDownloadScreen> createState() => _ModelDownloadScreenState();
 }
 
 class _ModelDownloadScreenState extends State<ModelDownloadScreen> {
-  // Gemma 3 Nano E2B (gated model, ~3.1GB, multimodal vision)
-  static const String _modelUrl =
-      'https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/resolve/main/gemma-3n-E2B-it-int4.task';
-  static const String _modelName = 'gemma-3n-E2B-it-int4.task';
+  bool _checking = true;
+  bool _downloading = false;
+  int _progress = 0;
+  GemmaFailure? _failure;
 
-  bool _isChecking = true;
-  bool _isInstalled = false;
-  bool _isDownloading = false;
-  int _downloadProgress = 0;
-  String? _errorMessage;
+  /// Progress can sit at the same percent for a while on a slow link. Tracking
+  /// the last change lets us say "still going" instead of looking frozen.
+  DateTime _lastProgressAt = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _checkIfModelExists();
+    _check();
   }
 
-  Future<void> _checkIfModelExists() async {
+  Future<void> _check() async {
     try {
-      final installed = await FlutterGemma.isModelInstalled(_modelName);
-      setState(() {
-        _isInstalled = installed;
-        _isChecking = false;
-      });
+      if (await GemmaService.instance.isInstalled()) {
+        _goNext();
+        return;
+      }
+      if (mounted) setState(() => _checking = false);
     } catch (e) {
-      setState(() {
-        _isChecking = false;
-        _errorMessage = 'Error checking model: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _checking = false;
+          _failure = GemmaFailure.from(e);
+        });
+      }
     }
   }
 
-  Future<void> _downloadModel() async {
-    setState(() {
-      _isDownloading = true;
-      _downloadProgress = 0;
-      _errorMessage = null;
-    });
-
-    try {
-      await FlutterGemma.installModel(modelType: ModelType.gemmaIt)
-          .fromNetwork(
-            _modelUrl,
-            foreground:
-                true, // ← ADD THIS — forces foreground service, more reliable for large files
-          )
-          .withProgress((progress) {
-            if (mounted) {
-              setState(() {
-                _downloadProgress = progress;
-              });
-            }
-          })
-          .install();
-
-      setState(() {
-        _isDownloading = false;
-        _isInstalled = true;
-      });
-    } catch (e) {
-      setState(() {
-        _isDownloading = false;
-        _errorMessage = 'Download failed: $e';
-      });
-    }
-  }
-
-  void _goToChat() {
-    Navigator.push(
+  void _goNext() {
+    if (!mounted) return;
+    Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const ChatScreen()),
+      MaterialPageRoute(builder: (_) => widget.next),
     );
+  }
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+      _failure = null;
+      _lastProgressAt = DateTime.now();
+    });
+    try {
+      await GemmaService.instance.install(
+        onProgress: (p) {
+          if (!mounted) return;
+          setState(() {
+            _progress = p.clamp(0, 100);
+            _lastProgressAt = DateTime.now();
+          });
+        },
+      );
+      _goNext();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _failure = GemmaFailure.from(e);
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
+        // Leaving mid-download would orphan the transfer, so block the back
+        // affordance while it runs.
+        automaticallyImplyLeading: !_downloading,
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
+        child: _checking
+            ? const LoadingView(title: 'Checking for the model…')
+            : _failure != null && !_downloading
+            ? ErrorView(
+                failure: _failure!,
+                onRetry: _download,
+                retryLabel: 'RETRY DOWNLOAD',
+              )
+            : Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                child: _downloading ? _progressBody() : _introBody(),
+              ),
+      ),
+    );
+  }
+
+  Widget _introBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('ONE-TIME SETUP', style: AppText.label),
+        Gap.sm,
+        const Text(Models.llmDisplayName, style: AppText.title),
+        Gap.md,
+        const Text(
+          'Everything after this runs offline. The model is downloaded once '
+          'and kept on the device.',
+          style: AppText.body,
+        ),
+        Gap.lg,
+        AppCard(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Gemma 3 Nano E2B',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                  height: 1.1,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Multimodal · 2B params · 3.1 GB',
-                style: TextStyle(
-                  color: Color(0xFFFF5722),
-                  fontSize: 14,
-                  letterSpacing: 2,
-                ),
-              ),
-              const SizedBox(height: 40),
-              if (_isChecking)
-                const Center(
-                  child: CircularProgressIndicator(color: Color(0xFFFF5722)),
-                )
-              else if (_errorMessage != null)
-                _buildErrorView()
-              else if (_isInstalled)
-                _buildReadyView()
-              else if (_isDownloading)
-                _buildDownloadingView()
-              else
-                _buildDownloadPromptView(),
-              const Spacer(),
-              _buildInfoCard(),
+            children: const [
+              _SpecRow(icon: Icons.sd_storage_outlined, label: 'Download size', value: Models.llmSize),
+              Divider(height: 22),
+              _SpecRow(icon: Icons.memory_outlined, label: 'Free RAM needed', value: '~3 GB'),
+              Divider(height: 22),
+              _SpecRow(icon: Icons.key_off_outlined, label: 'Access token', value: 'Not required'),
+              Divider(height: 22),
+              _SpecRow(icon: Icons.bolt_outlined, label: 'Backend', value: 'GPU'),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildDownloadPromptView() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Download the model once. Run it forever.',
-          style: TextStyle(color: Colors.white, fontSize: 16, height: 1.5),
-        ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: _downloadModel,
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFFF5722),
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
+        Gap.md,
+        AppCard(
+          color: AppColors.warning.withValues(alpha: .07),
+          borderColor: AppColors.warning.withValues(alpha: .22),
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Icon(Icons.wifi_rounded, size: 16, color: AppColors.warning),
+              Gap.wSm,
+              Expanded(
+                child: Text(
+                  'Use Wi-Fi, and keep the app in the foreground if you can. '
+                  'This is the only time the app touches the network.',
+                  style: AppText.caption,
+                ),
               ),
-            ),
-            child: const Text(
-              'Download Model',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
+            ],
           ),
+        ),
+        const Spacer(),
+        GradientButton(
+          label: 'DOWNLOAD MODEL',
+          icon: Icons.download_rounded,
+          onPressed: _download,
         ),
       ],
     );
   }
 
-  Widget _buildDownloadingView() {
+  Widget _progressBody() {
+    final stalledFor = DateTime.now().difference(_lastProgressAt);
+    final looksStalled = stalledFor > const Duration(seconds: 25);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text(
-          'Downloading model...',
-          style: TextStyle(color: Colors.white, fontSize: 16),
+        Text('DOWNLOADING ${Models.llmDisplayName.toUpperCase()}', style: AppText.label),
+        Gap.md,
+        ShaderMask(
+          shaderCallback: (b) => AppColors.accentGradient.createShader(b),
+          child: Text(
+            '$_progress%',
+            style: AppText.hero.copyWith(fontSize: 64, color: Colors.white),
+          ),
         ),
-        const SizedBox(height: 24),
+        Gap.md,
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(3),
           child: LinearProgressIndicator(
-            value: _downloadProgress / 100,
-            backgroundColor: Colors.white.withOpacity(0.1),
-            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFFF5722)),
-            minHeight: 8,
+            value: _progress == 0 ? null : _progress / 100,
+            minHeight: 6,
+            backgroundColor: AppColors.surfaceHigh,
+            valueColor: const AlwaysStoppedAnimation(AppColors.accent),
           ),
         ),
-        const SizedBox(height: 12),
+        Gap.lg,
         Text(
-          '$_downloadProgress%',
-          style: const TextStyle(
-            color: Color(0xFFFF5722),
-            fontSize: 24,
-            fontWeight: FontWeight.w900,
-          ),
+          _progress == 0
+              ? 'Connecting to Hugging Face…'
+              : looksStalled
+              ? 'Still going — large chunks can take a while to land.'
+              : 'Downloading ${Models.llmSize}. This happens once.',
+          textAlign: TextAlign.center,
+          style: AppText.bodySmall,
         ),
-        const SizedBox(height: 8),
+        Gap.sm,
         const Text(
-          'This is a one-time download. After this, inference is free.',
-          style: TextStyle(color: Colors.white54, fontSize: 12),
+          'On Android this runs in a foreground service, so it survives the '
+          '9-minute background limit.',
+          textAlign: TextAlign.center,
+          style: AppText.caption,
         ),
       ],
     );
   }
+}
 
-  Widget _buildReadyView() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+class _SpecRow extends StatelessWidget {
+  const _SpecRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
       children: [
-        Row(
-          children: [
-            const Icon(Icons.check_circle, color: Color(0xFFFF5722), size: 32),
-            const SizedBox(width: 12),
-            const Text(
-              'Model ready on-device',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: _goToChat,
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFFF5722),
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            child: const Text(
-              'Start Chat →',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
+        Icon(icon, size: 17, color: AppColors.textTertiary),
+        Gap.wMd,
+        Expanded(child: Text(label, style: AppText.bodySmall)),
+        Text(
+          value,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildErrorView() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.red.withOpacity(0.5)),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Error',
-            style: TextStyle(
-              color: Colors.red,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _errorMessage ?? 'Unknown error',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () {
-              setState(() => _errorMessage = null);
-              _downloadModel();
-            },
-            child: const Text(
-              'Retry',
-              style: TextStyle(color: Color(0xFFFF5722)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'ABOUT THIS MODEL',
-            style: TextStyle(
-              color: Colors.white38,
-              fontSize: 10,
-              letterSpacing: 2,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Gemma 3 Nano E2B — Google\'s on-device multimodal AI. '
-            'Understands text and images. Runs entirely on your phone. '
-            'No data leaves this device.',
-            style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
-          ),
-        ],
-      ),
     );
   }
 }

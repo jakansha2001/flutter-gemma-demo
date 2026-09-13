@@ -53,3 +53,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profileP
 /android/app/release
+
+# FVM Version Cache
+.fvm/
+# JVM crash dumps
+android/hs_err_pid*.log
+android/replay_pid*.log

@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The voice demo records a short clip and transcribes it on this device. Audio never leaves the phone.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs camera access to describe images with on-device AI.</string>
 	<key>NSLocalNetworkUsageDescription</key>

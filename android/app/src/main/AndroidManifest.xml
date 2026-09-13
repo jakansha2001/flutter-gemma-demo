@@ -1,6 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 <uses-permission android:name="android.permission.INTERNET"/>
 <uses-permission android:name="android.permission.CAMERA"/>
+<uses-permission android:name="android.permission.RECORD_AUDIO"/>
+<!-- Android 13+: the foreground-service download posts a progress notification. -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
@@ -35,6 +39,20 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Android 14+ (API 34+): the model download runs with
+             `foreground: true`, which goes through WorkManager's shared
+             SystemForegroundService. Without this foregroundServiceType
+             override startForeground() throws and the download crashes. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+        <!-- Required by the GPU backend on Android 12+: the OpenCL loader
+             uses libvndksupport.so (android_load_sphal_library) to dlopen the
+             vendor OpenCL driver. Missing it makes the engine fall back to
+             WebGPU, which hard-freezes some Mali GPUs (flutter_gemma #324). -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false"/>
         <uses-native-library
             android:name="libOpenCL.so"
             android:required="false"/>
