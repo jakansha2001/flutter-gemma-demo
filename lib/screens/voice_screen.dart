@@ -670,10 +670,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
               // silently returning to idle as if nothing happened.
               _toast('I did not catch that — try speaking a little louder.');
             }
-          case VoiceSynthesisSkipped():
-            // The sentence is still on screen; it just was not spoken. Not
-            // worth interrupting the turn for, so nothing to do here.
-            break;
+          case VoiceSynthesisSkipped(:final error):
+            // The sentence is still on screen and the turn carries on, but
+            // say why it went unspoken instead of failing silently.
+            _toast('Could not speak part of the reply: $error');
           case VoiceTurnFailed(:final error):
             final f = GemmaFailure.from(error);
             setState(() => _turnError = '${f.title}: ${f.message}');
@@ -769,6 +769,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Future<Object> _prepareClip(Uint8List pcm, int sampleRate) async {
     final wav = AudioConverter.pcmToWav(pcm, sampleRate: sampleRate);
     final dir = await getTemporaryDirectory();
+    // path_provider does not create this folder, and macOS may delete it
+    // when disk space runs low. Without it every write fails and the reply
+    // is shown but never spoken.
+    await dir.create(recursive: true);
 
     // A UNIQUE path per clip, deliberately. just_audio caches by URI, so
     // reusing one filename meant the second sentence either replayed the
