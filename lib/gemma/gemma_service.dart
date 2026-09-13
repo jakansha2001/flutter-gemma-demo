@@ -3,7 +3,7 @@ import 'package:gemma_vision_demo/gemma/model_catalog.dart';
 
 /// Owns the one loaded copy of Gemma 4 for the whole app.
 ///
-/// Model *weights* are the expensive thing — 2.4 GB of them. A session is
+/// Model *weights* are the expensive thing — 2.6 GB of them. A session is
 /// cheap by comparison: just its own conversation context. So the app loads
 /// the model once here and every screen calls [openChat] for an independent
 /// dialogue on top of it. Screens close their own chat on dispose; nobody
@@ -32,9 +32,9 @@ class GemmaService {
       fileType: Models.llmFileType,
     ).fromNetwork(
       Models.llmUrl,
-      // Android only: run the download in a foreground service so it survives
-      // the 9-minute background limit. A 2.4 GB file over conference wifi
-      // absolutely will hit that.
+      // Android only: run the download as a foreground service with a
+      // progress notification, so Android is less likely to pause a 2.6 GB
+      // download when the app goes to the background.
       foreground: true,
     );
     if (onProgress != null) builder = builder.withProgress(onProgress);

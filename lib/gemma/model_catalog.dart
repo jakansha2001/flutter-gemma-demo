@@ -22,19 +22,19 @@ abstract final class Models {
       'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm';
   static const llmFilename = 'gemma-4-E2B-it.litertlm';
   static const llmDisplayName = 'Gemma 4 E2B';
-  static const llmSize = '2.4 GB';
+  static const llmSize = '2.6 GB';
 
-  /// `ModelType.gemma4` is new in 0.14.1 and is **not** interchangeable with
-  /// `gemmaIt`. It routes tool declarations through the LiteRT-LM SDK's own
-  /// chat template, so the model emits native `<|tool_call>…<tool_call|>`
-  /// tokens that the plugin parses into a [FunctionCallResponse]. Leave it on
-  /// `gemmaIt` (the v1 value) and function calling falls back to Dart-side
-  /// prompt engineering, which Gemma 4 was not trained for.
+  /// `ModelType.gemma4` is **not** interchangeable with `gemmaIt`. It sends
+  /// tool declarations through Gemma 4's own chat template, so the model
+  /// replies with native tool calls that the plugin parses into a
+  /// [FunctionCallResponse]. `gemmaIt` is the setting for older Gemma chat
+  /// models: with it, tools are written into the prompt as plain text instead.
+  /// It doesn't change which model runs; the file at [llmUrl] does that.
   static const llmModelType = ModelType.gemma4;
 
   /// `ModelFileType` selects the *engine* and is never inferred from the file
-  /// name — `installModel` defaults it to `.task`, so omitting this would hand
-  /// a `.litertlm` blob to MediaPipe and fail with "Invalid magic number".
+  /// name. `installModel` defaults it to `.task`, the MediaPipe format, so
+  /// leaving it out means this `.litertlm` file won't load.
   static const llmFileType = ModelFileType.litertlm;
 
   /// Context window (input + history + reply), not the reply length.

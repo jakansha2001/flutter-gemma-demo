@@ -34,11 +34,11 @@
  "(Slow down. This is the moment the whole talk builds up to.) Watch the Wi-Fi icon. (Turn it off.) There's no network at all now. Same prompt, same speed. (Wait a couple of seconds after the answer appears.) And that's really the whole point of this talk.",
  "Now let's look at the code. Everything on the next few slides uses the current flutter_gemma API, and it's the same code that's running in the app you just saw.",
  "You need two packages: the core and the LiteRT-LM engine. Then there's one call in main, where you initialize flutter_gemma and give it the engine. (Point at the highlighted lines.) This is the big 1.0 change, and if you leave it out, the app still compiles. You'll also need Flutter 3.44 or newer. And notice what's gone: the last version of this talk needed a Hugging Face token and a .env file. The Gemma 4 build we use is public, so you don't need either anymore.",
- "There are three calls here. installModel downloads the model once, about 2.6 GB, and if the file is already on the device it just marks the model as active. getActiveModel loads it onto the GPU, and createChat starts a conversation. One thing people often mix up: maxTokens is the context window, not the length of the reply. If you want to limit the reply, use maxOutputTokens. (Point at the yellow lines.) Get either of these two lines wrong and you can easily lose a day. I'll come back to them.",
+ "There are three calls here. installModel downloads the model once, about 2.6 GB, and if the file is already on the device it just marks the model as active. getActiveModel loads it onto the GPU, and createChat starts a conversation. One thing people often mix up: maxTokens is the context window, not the length of the reply. If you want to limit the reply, use maxOutputTokens. (Point at the yellow lines.) Get either of these wrong and the app still compiles, so it's easy to lose a day. I'll come back to them.",
  "First you add the message, then you loop over the response stream. Text tokens build up the answer and thinking tokens build up the reasoning, which is what you saw in the thinking demo. ModelResponse is a sealed class, so the compiler makes you handle every case. And sending an image is just a different kind of message: withImage instead of text.",
  "This has two parts. On the left, you describe the tool: a name, a description and a JSON Schema for its arguments. On the right, generateChatResponseWithTools runs the whole loop for you. You give it one callback, onToolCall, which runs your Dart code and returns a map. The lesson I learned the hard way: don't throw from a tool. A thrown exception ends the stream. Return an error map instead, and the model can read it and apologise or try again.",
  "Most talks only show you the happy path. These are the things that actually broke while I was building this app, so they don't break for you.",
- "These are the two lines I highlighted earlier. First, the model type should be gemma4, not gemmaIt. gemmaIt is what you'd use for Gemma 3. With Gemma 4, chat still works, but your tools get pasted into the prompt as text instead of using Gemma 4's own tool-call tokens. Second, the file type decides which engine loads the model, and it's never guessed from the file extension. It defaults to .task, so your .litertlm file ends up with MediaPipe, which can't load it. Neither mistake gives you a compile error.",
+ "When I built this demo, two settings caught me out. (Point at modelType.) The first is modelType. It doesn't pick the model; the model is the file you download. It tells flutter_gemma how to talk to that file. Gemma 4 has its own format, with a built-in way to call tools. If you don't pass ModelType.gemma4 when you open a chat, flutter_gemma falls back to gemmaIt, the setting for older Gemma models. Chat still works, but your tools get pasted into the prompt as plain text, and tool calls can come back as raw JSON instead of running your code. So pass gemma4 when you install the model and when you open the chat. (Point at fileType.) The second is fileType. It decides which engine opens the model: LiteRT-LM for .litertlm files, MediaPipe for .task files. flutter_gemma doesn't look at the file name, and the default is .task, so if you leave it out your model doesn't load. Neither mistake gives you a compile error. You only find out when you run the app. (If asked: IT in gemmaIt means instruction-tuned, the chat version of a model.)",
  "openChat gives you separate sessions on one loaded model, so I used it to give every screen its own conversation. Text worked perfectly, and then the first image failed. (Read the error on the right.) On the .litertlm engine, those extra sessions have their history replayed as text whenever the engine switches between them, so they can't hold images. createChat uses the main session, and images work fine there. The fix was changing one method name.",
  "My first voice version felt broken. The text finished appearing, then there were several seconds of silence, and only then did it start speaking. (Point at the top bar.) Text-to-speech takes the whole text and gives back the whole audio, so nothing can play until the model has finished writing. (Point at the bottom.) The fix was to split the reply into sentences as it streams in, and to prepare the next sentence's audio while the current one is playing. Now the voice starts after the first sentence instead of the last. (flutter_gemma_speech's VoiceSession is a good place to start. This is what I moved to when I wanted replies to start speaking sooner.)",
  "(Read the reply out loud, then point at ソース.) That word is Japanese for \"source\", right in the middle of an English sentence. These models know many languages, and with loose sampling the Japanese word can win over the English one. What helped was tighter sampling, telling the model which language to use, and, for speech, removing characters the English voice can't pronounce. To be honest, it's rarer now, but it still happens. It's a small model.",
@@ -828,7 +828,7 @@ section[data-deck-active] .spin { animation: spin 60s linear infinite; }
       </div>
       <div class="card tight" style="background:var(--yellow-lo)">
         <div class="h3 c-yellow" style="font-size:34px">Watch those two highlighted lines</div>
-        <p class="body ink" style="font-size:26px;margin-top:8px">Neither one has a safe default. I'll come back to them.</p>
+        <p class="body ink" style="font-size:26px;margin-top:8px">Get either one wrong and it still compiles. I'll come back to them.</p>
       </div>
     </div>
   </div>
@@ -930,19 +930,22 @@ section[data-deck-active] .spin { animation: spin 60s linear infinite; }
 <section data-label="Lesson · Two defaults">
 <div class="pad">
   <p class="kicker r">Lesson 1</p>
-  <h2 class="h1 r d1s">Two settings <span class="c-yellow">you can't leave to defaults.</span></h2>
-  <pre class="code" style="margin-top:48px;font-size:32px;padding:36px 56px"><span class="t">FlutterGemma</span>.<span class="f">installModel</span>(
+  <h2 class="h1 r d1s">Two settings <span class="c-yellow">you have to get right.</span></h2>
+  <pre class="code" style="margin-top:36px;font-size:27px;padding:26px 50px;flex-shrink:0"><span class="t">FlutterGemma</span>.<span class="f">installModel</span>(
   modelType: <span class="t">ModelType</span>.gemma4,       <span class="cm">// not ModelType.gemmaIt</span>
-  fileType: <span class="t">ModelFileType</span>.litertlm, <span class="cm">// never inferred from the filename</span>
+  fileType: <span class="t">ModelFileType</span>.litertlm, <span class="cm">// defaults to .task if left out</span>
+)
+model.<span class="f">createChat</span>(
+  modelType: <span class="t">ModelType</span>.gemma4,       <span class="cm">// defaults to gemmaIt if left out</span>
 )</pre>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:36px;flex:1">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:30px;flex:1">
     <div class="card r d2s" style="background:var(--surface)">
-      <code class="h3" style="font-size:40px;color:var(--yellow-hi)">ModelType.gemma4</code>
-      <p class="body" style="font-size:29px;margin-top:18px">Sends tool definitions through Gemma 4's own chat template, so the model replies with real tool-call tokens. With <code class="code-inline">gemmaIt</code>, the Gemma 3 setting, tools are pasted into the prompt as plain text.</p>
+      <code class="h3" style="font-size:38px;color:var(--yellow-hi)">ModelType.gemma4</code>
+      <p class="body" style="font-size:27px;margin-top:14px">Tells flutter_gemma how to talk to Gemma 4, including its built-in tool calls. It doesn't pick the model; the file does. Leave it out of <code class="code-inline">createChat</code> and it uses <code class="code-inline">gemmaIt</code>, the older Gemma setting, so tools are pasted into the prompt as plain text.</p>
     </div>
     <div class="card r d3s" style="background:var(--surface)">
-      <code class="h3" style="font-size:40px;color:var(--yellow-hi)">ModelFileType.litertlm</code>
-      <p class="body" style="font-size:29px;margin-top:18px">The file type decides which engine loads the model, and it defaults to <code class="code-inline">.task</code>. Leave it out and your <code class="code-inline">.litertlm</code> file goes to MediaPipe, which can't read it.</p>
+      <code class="h3" style="font-size:38px;color:var(--yellow-hi)">ModelFileType.litertlm</code>
+      <p class="body" style="font-size:27px;margin-top:14px">Decides which engine opens the file: LiteRT-LM or MediaPipe. It isn't worked out from the file name, and it defaults to <code class="code-inline">.task</code>, the MediaPipe format. Leave it out and your <code class="code-inline">.litertlm</code> model won't load.</p>
     </div>
   </div>
 </div>

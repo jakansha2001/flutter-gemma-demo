@@ -98,7 +98,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final picked = await _picker.pickImage(
         source: source,
         // Downscale before the vision encoder sees it: full-resolution camera
-        // frames are pure memory pressure on a device already holding 2.4 GB
+        // frames are pure memory pressure on a device already holding 2.6 GB
         // of weights, and the encoder resizes anyway.
         maxWidth: 1024,
         maxHeight: 1024,
