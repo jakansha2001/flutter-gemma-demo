@@ -183,12 +183,16 @@ Two constraints worth knowing:
   which stalls a live demo.
 
 **And it does not use `VoiceSession` in the end.** `synthesize` is batch — full
-text in, full audio out, per its own dartdoc — and `VoiceSession` emits a single
-audio event at the very end of the turn. So the complete reply finishes printing
-and the user then waits again, in silence, while the whole thing is synthesized.
-Driving the three models directly allows cutting the reply into sentences and
-synthesizing each as it completes, so audio starts after the *first* sentence.
-See `lib/gemma/voice_turn.dart`.
+text in, full audio out, per its own dartdoc. By default `VoiceSession` also
+speaks only once the whole reply is ready, so the reply finishes printing and
+the user waits again in silence. This app drives the three models directly,
+cutting the reply into sentences and synthesizing each as it completes, so
+audio starts after the *first* sentence. See `lib/gemma/voice_turn.dart`.
+
+`VoiceSession` can do the same thing: `VoiceSession.fromChat(..., streamAudio:
+true)` (added in flutter_gemma_speech 0.4.3) splits the reply into clauses and
+overlaps synthesis with generation. This app was built before that option was
+noticed. For a new project, start there.
 
 The package also ships no voice-activity detection, so hands-free needs its own
 — see `lib/gemma/voice_activity_detector.dart`. A fixed dB threshold does not

@@ -56,13 +56,13 @@ class VoiceTurnFailed extends VoiceTurnEvent {
 /// Runs one voice turn: transcribe → generate → speak.
 ///
 /// **Why this does not use `VoiceSession`.** flutter_gemma_speech ships
-/// `VoiceSession.fromChat`, which does exactly this chain in one call — and it
-/// is the right starting point. But `SpeechSynthesizer.synthesize` is batch
-/// ("full text → full audio", per its own dartdoc), and `VoiceSession` emits a
-/// single audio event at the very end. So the user watches the complete reply
-/// finish printing, then waits again while the whole thing is synthesized, and
-/// only then hears anything. On a phone that dead air is several seconds, and
-/// it feels broken.
+/// `VoiceSession.fromChat`, which runs this chain in one call.
+/// `SpeechSynthesizer.synthesize` is batch ("full text → full audio", per its
+/// own dartdoc), and by default `VoiceSession` speaks once the whole reply is
+/// ready, which leaves dead air after the text finishes printing.
+/// `VoiceSession.fromChat(..., streamAudio: true)` (flutter_gemma_speech 0.4.3+)
+/// avoids that by speaking clause by clause. This class was written before that
+/// option was noticed; for new code, try `streamAudio: true` first.
 ///
 /// Driving the three models directly lets us cut the reply into sentences as
 /// it streams and synthesize each one as it completes, so audio starts after

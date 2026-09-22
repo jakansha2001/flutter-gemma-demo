@@ -272,9 +272,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
         return;
       }
 
-      // Driving the three models ourselves, rather than VoiceSession — see
-      // the VoiceTurn class doc for why (batch TTS means VoiceSession cannot
-      // start speaking until the whole reply is generated).
+      // Driving the three models ourselves rather than VoiceSession. See the
+      // VoiceTurn class doc: VoiceSession(streamAudio: true) now covers the
+      // sentence-by-sentence speaking this does.
       final recognizerRef = recognizer;
       final synthRef = synth;
       final chatRef = chat;
